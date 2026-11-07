@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -35,6 +36,20 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute fork version tag
+        id: forkver
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Upstream tags are fetched into the runner only, never pushed back.
+          git fetch --no-tags https://github.com/router-for-me/CLIProxyAPI.git '+refs/tags/v*:refs/tags/v*'
+          base="$(git tag --merged HEAD -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ -z "$base" ]; then
+            echo "No upstream release tag reachable from HEAD" >&2
+            exit 1
+          fi
+          n="$(git rev-list --count "$base..HEAD")"
+          echo "value=${base}-trogonstack.${n}" >> "$GITHUB_OUTPUT"
+          echo "Fork image tag: \`${base}-trogonstack.${n}\`" >> "$GITHUB_STEP_SUMMARY"
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
@@ -42,6 +57,7 @@ jobs:
           tags: |
             type=sha,format=long
             type=ref,event=branch
+            type=raw,value=${{ steps.forkver.outputs.value || 'unused' }},enable=${{ github.ref == 'refs/heads/main' }}
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
