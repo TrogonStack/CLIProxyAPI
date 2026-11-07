@@ -155,6 +155,8 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
+github.com/nats-io/nkeys v0.4.17 h1:JAJrlDhOyQqOt0a1eg4cbIZ1Kc7+vmkCigAltpwQpVA=
+github.com/nats-io/nkeys v0.4.17/go.mod h1:llLgWoI0o4z/Q57q2R1kHfmocyhGV6VG/U18Glg1Afs=
 github.com/pelletier/go-toml/v2 v2.4.3-0.20260624044523-35f78d5908f1 h1:gIZQQ2+wbsdQGWLPDSdJFptR25tBCjSC0KbSIQZ1rgE=
 github.com/pelletier/go-toml/v2 v2.4.3-0.20260624044523-35f78d5908f1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pierrec/xxHash v0.1.5 h1:n/jBpwTHiER4xYvK3/CdPVnLDPchj8eTJFFLUb4QHBo=
