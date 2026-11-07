@@ -1,0 +1,37 @@
+{
+  "case": "business_missing_account_header",
+  "request": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900001",
+        "turn_ids": [
+          "00000000-0000-7000-8000-000000000001"
+        ]
+      }
+    ],
+    "include_settled_response_ids": true
+  },
+  "status": 200,
+  "content_type": "application/json",
+  "response": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900001",
+        "turns": [
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000001",
+            "model": null,
+            "estimated_usage_credits_micros": null,
+            "estimated_usage_usd_micros": null,
+            "net_new_input_tokens": null,
+            "cached_input_tokens": null,
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null,
+            "settled_response_ids": []
+          }
+        ]
+      }
+    ]
+  }
+}

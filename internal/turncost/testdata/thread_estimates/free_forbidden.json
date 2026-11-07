@@ -1,0 +1,19 @@
+{
+  "case": "free_forbidden",
+  "request": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900002",
+        "turn_ids": [
+          "00000000-0000-7000-8000-000000000009"
+        ]
+      }
+    ],
+    "include_settled_response_ids": true
+  },
+  "status": 403,
+  "content_type": "application/json",
+  "response": {
+    "detail": "Forbidden"
+  }
+}

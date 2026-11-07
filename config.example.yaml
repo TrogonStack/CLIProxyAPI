@@ -1269,6 +1269,13 @@ observability:
     # Default: true. Prefer ChatGPT's own estimate for each turn, fetched with the credential that
     # served it. Accounts without access (403) and turns it has not settled use the local prices.
     upstream-estimates: true
+    # How long an account's probe result is remembered (Go duration). An account is probed by its
+    # first real query, because a plan type does not predict access; a 403 stops further
+    # upstream calls for it until this expires. Default: 2160h (90 days).
+    # forbidden-ttl: 2160h
+    # Where probe results are persisted (sha256 of the account id, status, check time).
+    # Default: turncost-state.json next to auth-dir. A missing or unwritable file is tolerated.
+    # state-file: /path/to/turncost-state.json
     # Optional per-model USD prices per 1M tokens that add to or override the built-in table.
     # Models with no price (built-in or here) are reported as pending.
     # prices:

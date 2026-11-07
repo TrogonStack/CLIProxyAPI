@@ -21,6 +21,8 @@ observability:
   codex-turn-costs:
     enabled: false
     upstream-estimates: false
+    forbidden-ttl: 24h
+    state-file: state.json
     prices:
       gpt-5.5:
         input: 5
@@ -35,6 +37,9 @@ observability:
 	}
 	if cfg.CodexTurnCosts.UpstreamEstimates {
 		t.Fatal("upstream-estimates: false was not honored")
+	}
+	if cfg.CodexTurnCosts.ForbiddenTTLDuration().Hours() != 24 || cfg.CodexTurnCosts.StateFile != "state.json" {
+		t.Fatalf("forbidden-ttl/state-file = %+v", cfg.CodexTurnCosts)
 	}
 	got := cfg.CodexTurnCosts.Prices["gpt-5.5"]
 	if got != (CodexTurnCostPrice{Input: 5, CachedInput: 0.5, Output: 30}) {

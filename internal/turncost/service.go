@@ -4,12 +4,14 @@ package turncost
 
 import (
 	"context"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
@@ -45,12 +47,15 @@ type Service struct {
 	// estimates is the upstream-estimates switch.
 	estimates atomic.Bool
 	upstream  upstreamState
-	now       func() time.Time
+	// entitlements remembers which accounts ChatGPT answers estimates for.
+	entitlements *entitlements
+	now          func() time.Time
 }
 
 // NewService returns a disabled service backed by store.
 func NewService(store *Store) *Service {
 	s := &Service{store: store, now: time.Now}
+	s.entitlements = newEntitlements(func() time.Time { return s.now() })
 	s.prices.Store(NewPriceTable(nil))
 	return s
 }
@@ -77,6 +82,23 @@ func (s *Service) Configure(cfg *config.Config) {
 	s.prices.Store(NewPriceTable(cfg.CodexTurnCosts.Prices))
 	s.enabled.Store(cfg.CodexTurnCosts.Enabled)
 	s.estimates.Store(cfg.CodexTurnCosts.UpstreamEstimates)
+	s.entitlements.configure(stateFilePath(cfg), cfg.CodexTurnCosts.ForbiddenTTLDuration())
+}
+
+// stateFilePath is the configured state file, else a file next to the auth dir. Empty
+// disables persistence.
+func stateFilePath(cfg *config.Config) string {
+	if path := strings.TrimSpace(cfg.CodexTurnCosts.StateFile); path != "" {
+		return path
+	}
+	if strings.TrimSpace(cfg.AuthDir) == "" {
+		return ""
+	}
+	authDir, err := util.ResolveAuthDir(cfg.AuthDir)
+	if err != nil || authDir == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(authDir), DefaultStateFileName)
 }
 
 // Enabled reports whether the feature is on.

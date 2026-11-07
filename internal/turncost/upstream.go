@@ -19,10 +19,8 @@ const (
 	defaultUpstreamBaseURL = "https://chatgpt.com/backend-api"
 	estimatesPath          = "/wham/usage/thread-estimates/query"
 
-	upstreamTimeout   = 10 * time.Second
-	forbiddenTTL      = time.Hour
-	maxForbiddenAuths = 1024
-	maxUpstreamBody   = 4 << 20
+	upstreamTimeout = 10 * time.Second
+	maxUpstreamBody = 4 << 20
 
 	upstreamUserAgent  = "codex-cli"
 	upstreamOriginator = "codex_cli_rs"
@@ -53,6 +51,7 @@ type estimatesResponse struct {
 			TurnID             string   `json:"turn_id"`
 			Model              *string  `json:"model"`
 			EstimatedUSDMicros *int64   `json:"estimated_usage_usd_micros"`
+			NativeUSDMicros    *int64   `json:"native_usage_usd_micros"`
 			SettledResponseIDs []string `json:"settled_response_ids"`
 		} `json:"turns"`
 	} `json:"threads"`
@@ -60,10 +59,9 @@ type estimatesResponse struct {
 
 // upstreamState holds what the ChatGPT pass-through needs besides the config switch.
 type upstreamState struct {
-	mu        sync.Mutex
-	source    AuthSource
-	baseURL   string
-	forbidden map[string]time.Time
+	mu      sync.Mutex
+	source  AuthSource
+	baseURL string
 }
 
 // SetAuthSource sets where credentials come from. Without one, only local prices are used.
@@ -89,42 +87,6 @@ func (s *Service) upstreamBaseURL() string {
 		return s.upstream.baseURL
 	}
 	return defaultUpstreamBaseURL
-}
-
-func (s *Service) isForbidden(authID string) bool {
-	s.upstream.mu.Lock()
-	defer s.upstream.mu.Unlock()
-	until, ok := s.upstream.forbidden[authID]
-	if !ok {
-		return false
-	}
-	if !s.now().Before(until) {
-		delete(s.upstream.forbidden, authID)
-		return false
-	}
-	return true
-}
-
-// markForbidden remembers that ChatGPT refuses estimates for the credential, which is the
-// case for plans without workspace usage access.
-func (s *Service) markForbidden(authID string) {
-	s.upstream.mu.Lock()
-	defer s.upstream.mu.Unlock()
-	now := s.now()
-	if s.upstream.forbidden == nil {
-		s.upstream.forbidden = make(map[string]time.Time)
-	}
-	if _, ok := s.upstream.forbidden[authID]; !ok && len(s.upstream.forbidden) >= maxForbiddenAuths {
-		for id, until := range s.upstream.forbidden {
-			if !now.Before(until) {
-				delete(s.upstream.forbidden, id)
-			}
-		}
-		if len(s.upstream.forbidden) >= maxForbiddenAuths {
-			return
-		}
-	}
-	s.upstream.forbidden[authID] = now.Add(forbiddenTTL)
 }
 
 // turnsByAuth groups the turns that can be priced upstream by credential, then thread.
@@ -173,15 +135,17 @@ func (s *Service) fetchUpstream(ctx context.Context, source AuthSource, turns ma
 }
 
 func (s *Service) fetchForAuth(ctx context.Context, source AuthSource, authID string, threads map[string][]string, turns map[string]Turn) map[string]TurnCost {
-	if s.isForbidden(authID) {
-		return nil
-	}
 	auth, ok := source.GetByID(authID)
 	if !ok || auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), codexProvider) {
 		return nil
 	}
 	accountID, _ := auth.Metadata["account_id"].(string)
-	if strings.TrimSpace(accountID) == "" {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	// An account with no remembered answer is probed by this real query.
+	if s.entitlements.status(accountID) == statusForbidden {
 		return nil
 	}
 
@@ -204,7 +168,7 @@ func (s *Service) fetchForAuth(ctx context.Context, source AuthSource, authID st
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", upstreamUserAgent)
 	req.Header.Set("Originator", upstreamOriginator)
-	req.Header.Set("Chatgpt-Account-Id", strings.TrimSpace(accountID))
+	req.Header.Set("Chatgpt-Account-Id", accountID)
 
 	resp, err := source.HttpRequest(ctx, auth, req)
 	if err != nil {
@@ -214,7 +178,8 @@ func (s *Service) fetchForAuth(ctx context.Context, source AuthSource, authID st
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusForbidden:
-		s.markForbidden(authID)
+		// Includes an account that was allowed before: access can be withdrawn.
+		s.entitlements.set(accountID, statusForbidden)
 		return nil
 	case resp.StatusCode != http.StatusOK:
 		log.Debugf("codex turn costs: upstream estimates returned status %d", resp.StatusCode)
@@ -227,6 +192,17 @@ func (s *Service) fetchForAuth(ctx context.Context, source AuthSource, authID st
 	}
 
 	out := make(map[string]TurnCost)
+	entitled := false
+	for _, thread := range decoded.Threads {
+		for _, est := range thread.Turns {
+			entitled = entitled || est.EstimatedUSDMicros != nil
+		}
+	}
+	// Null amounts mean the turn was unknown or the account header was ignored, which says
+	// nothing about access, so only a real amount proves the account is entitled.
+	if entitled {
+		s.entitlements.set(accountID, statusAllowed)
+	}
 	for _, thread := range decoded.Threads {
 		requested := threads[thread.ThreadID]
 		for _, est := range thread.Turns {

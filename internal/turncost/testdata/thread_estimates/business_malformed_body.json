@@ -1,0 +1,14 @@
+{
+  "case": "business_malformed_body",
+  "request": "{\"threads\":\"nope\"}",
+  "status": 400,
+  "content_type": "application/json",
+  "response": {
+    "error": {
+      "message": "[{'type': 'list_type', 'loc': ('body', 'threads'), 'msg': 'Input should be a valid list'}]",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": null
+    }
+  }
+}

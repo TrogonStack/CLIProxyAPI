@@ -199,7 +199,7 @@ func TestQueryForbiddenFallsBackAndIsCached(t *testing.T) {
 		t.Fatalf("upstream hits = %d, want 1 while forbidden is cached", hits)
 	}
 
-	now = now.Add(forbiddenTTL + time.Minute)
+	now = now.Add(DefaultForbiddenTTL + time.Minute)
 	s.Query(context.Background(), []string{"turn-1"})
 	if hits := u.hits.Load(); hits != 2 {
 		t.Fatalf("upstream hits = %d, want 2 after the cache expired", hits)

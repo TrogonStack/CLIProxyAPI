@@ -431,8 +431,21 @@ type CodexTurnCostsConfig struct {
 	// UpstreamEstimates asks ChatGPT for its own per-turn estimate with the same credential
 	// that served the turn, and uses the local prices only when it has none. Default: true.
 	UpstreamEstimates bool `yaml:"upstream-estimates" json:"upstream-estimates"`
+	// ForbiddenTTL is how long an account's probe result (allowed or forbidden) is remembered,
+	// as a Go duration. Default: 2160h (90 days).
+	ForbiddenTTL string `yaml:"forbidden-ttl,omitempty" json:"forbidden-ttl,omitempty"`
+	// StateFile persists those probe results. Default: turncost-state.json next to auth-dir.
+	StateFile string `yaml:"state-file,omitempty" json:"state-file,omitempty"`
 	// Prices adds or overrides USD prices per model name, per 1M tokens.
 	Prices map[string]CodexTurnCostPrice `yaml:"prices,omitempty" json:"prices,omitempty"`
+}
+
+// ForbiddenTTLDuration returns ForbiddenTTL, or 90 days when it is unset or invalid.
+func (c CodexTurnCostsConfig) ForbiddenTTLDuration() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(c.ForbiddenTTL)); err == nil && d > 0 {
+		return d
+	}
+	return 90 * 24 * time.Hour
 }
 
 // CodexTurnCostPrice holds USD prices per 1M tokens for one model.

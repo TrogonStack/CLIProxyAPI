@@ -1,0 +1,89 @@
+{
+  "case": "business_without_settled_ids",
+  "request": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900004",
+        "turn_ids": [
+          "00000000-0000-7000-8000-000000000002",
+          "00000000-0000-7000-8000-000000000003",
+          "00000000-0000-7000-8000-000000000004",
+          "00000000-0000-7000-8000-000000000005",
+          "00000000-0000-7000-8000-000000000006"
+        ]
+      }
+    ],
+    "include_settled_response_ids": false
+  },
+  "status": 200,
+  "content_type": "application/json",
+  "response": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900004",
+        "turns": [
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000002",
+            "model": "gpt-6.1-sol",
+            "estimated_usage_credits_micros": 11642740,
+            "estimated_usage_usd_micros": 465710,
+            "net_new_input_tokens": 188135,
+            "cached_input_tokens": 746496,
+            "input_tokens": 934631,
+            "output_tokens": 1479,
+            "total_tokens": 936110,
+            "native_usage_usd_micros": 0
+          },
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000003",
+            "model": "gpt-6.1-sol",
+            "estimated_usage_credits_micros": 76928120,
+            "estimated_usage_usd_micros": 3077125,
+            "net_new_input_tokens": 61966,
+            "cached_input_tokens": 25987328,
+            "input_tokens": 26049294,
+            "output_tokens": 35446,
+            "total_tokens": 26084740,
+            "native_usage_usd_micros": 0
+          },
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000004",
+            "model": "gpt-6.1-sol",
+            "estimated_usage_credits_micros": 30864960,
+            "estimated_usage_usd_micros": 1234598,
+            "net_new_input_tokens": 24918,
+            "cached_input_tokens": 9965824,
+            "input_tokens": 9990742,
+            "output_tokens": 18818,
+            "total_tokens": 10009560,
+            "native_usage_usd_micros": 0
+          },
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000005",
+            "model": "gpt-6.1-sol",
+            "estimated_usage_credits_micros": 4114720,
+            "estimated_usage_usd_micros": 164589,
+            "net_new_input_tokens": 3933,
+            "cached_input_tokens": 1289728,
+            "input_tokens": 1293661,
+            "output_tokens": 2775,
+            "total_tokens": 1296436,
+            "native_usage_usd_micros": 0
+          },
+          {
+            "turn_id": "00000000-0000-7000-8000-000000000006",
+            "model": "gpt-6.1-sol",
+            "estimated_usage_credits_micros": 49612600,
+            "estimated_usage_usd_micros": 1984503,
+            "net_new_input_tokens": 42145,
+            "cached_input_tokens": 16125440,
+            "input_tokens": 16167585,
+            "output_tokens": 28767,
+            "total_tokens": 16196352,
+            "native_usage_usd_micros": 0
+          }
+        ]
+      }
+    ]
+  }
+}

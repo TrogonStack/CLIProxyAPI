@@ -1,0 +1,19 @@
+{
+  "case": "invalid_token",
+  "request": {
+    "threads": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000900007",
+        "turn_ids": [
+          "00000000-0000-7000-8000-000000000010"
+        ]
+      }
+    ],
+    "include_settled_response_ids": true
+  },
+  "status": 401,
+  "content_type": "application/json",
+  "response": {
+    "detail": "Could not parse your authentication token. Please try signing in again."
+  }
+}
