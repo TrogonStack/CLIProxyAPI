@@ -20,3 +20,5 @@ runs:
         mkdir -p "$RUNNER_TEMP/mise-install"
         tar -xzf "$archive" -C "$RUNNER_TEMP/mise-install"
         echo "$RUNNER_TEMP/mise-install/mise/bin" >> "$GITHUB_PATH"
+        # The checkout is ours, so its mise.toml needs no trust prompt.
+        echo "MISE_TRUSTED_CONFIG_PATHS=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
