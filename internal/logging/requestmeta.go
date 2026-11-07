@@ -26,6 +26,8 @@ type ClientRequestMetadata struct {
 
 	// TurnID is the Codex turn id from the x-codex-turn-metadata header.
 	TurnID string
+	// ThreadID is the Codex thread id the turn belongs to.
+	ThreadID string
 }
 
 type responseStatusHolder struct {

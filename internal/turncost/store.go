@@ -28,12 +28,21 @@ type Response struct {
 	Model           string
 	RequestedModel  string
 	ReasoningEffort string
+	// AuthID is the credential that served the response and ThreadID the Codex thread the
+	// turn belongs to. They are kept per turn, not per response.
+	AuthID   string
+	ThreadID string
 }
 
 // Turn is a copy of the responses recorded for one turn.
 type Turn struct {
 	ID        string
 	Responses []Response
+	// AuthID and ThreadID come from the latest response that carried them. MixedAuth is set
+	// when more than one credential served the turn, so no single account can price it.
+	AuthID    string
+	ThreadID  string
+	MixedAuth bool
 }
 
 type turnEntry struct {
@@ -41,6 +50,9 @@ type turnEntry struct {
 	updatedAt time.Time
 	responses []Response
 	index     map[string]int
+	authID    string
+	threadID  string
+	mixedAuth bool
 }
 
 // Store keeps per-turn response usage in memory. It is bounded by turn count,
@@ -86,6 +98,8 @@ func (s *Store) Add(turnID string, resp Response) {
 	resp.Model = clip(resp.Model)
 	resp.RequestedModel = clip(resp.RequestedModel)
 	resp.ReasoningEffort = clip(resp.ReasoningEffort)
+	authID, threadID := clipID(resp.AuthID), clipID(resp.ThreadID)
+	resp.AuthID, resp.ThreadID = "", ""
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,6 +115,15 @@ func (s *Store) Add(turnID string, resp Response) {
 		s.turns[turnID] = s.order.PushFront(entry)
 	}
 	entry.updatedAt = now
+	if authID != "" {
+		if entry.authID != "" && entry.authID != authID {
+			entry.mixedAuth = true
+		}
+		entry.authID = authID
+	}
+	if threadID != "" {
+		entry.threadID = threadID
+	}
 	if idx, ok := entry.index[resp.ID]; ok {
 		entry.responses[idx] = resp
 	} else if len(entry.responses) < s.maxResponses {
@@ -128,7 +151,13 @@ func (s *Store) Get(turnID string) (Turn, bool) {
 		s.removeLocked(elem)
 		return Turn{}, false
 	}
-	return Turn{ID: entry.id, Responses: append([]Response(nil), entry.responses...)}, true
+	return Turn{
+		ID:        entry.id,
+		Responses: append([]Response(nil), entry.responses...),
+		AuthID:    entry.authID,
+		ThreadID:  entry.threadID,
+		MixedAuth: entry.mixedAuth,
+	}, true
 }
 
 // Len returns the number of retained turns.
@@ -162,6 +191,15 @@ func (s *Store) removeLocked(elem *list.Element) {
 func clip(value string) string {
 	if len(value) > maxLabelLength {
 		value = value[:maxLabelLength]
+	}
+	return strings.Clone(value)
+}
+
+// clipID drops identifiers longer than maxIDLength rather than truncating them, because a
+// truncated id would name a different credential or thread.
+func clipID(value string) string {
+	if len(value) > maxIDLength {
+		return ""
 	}
 	return strings.Clone(value)
 }

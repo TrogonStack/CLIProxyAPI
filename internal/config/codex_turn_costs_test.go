@@ -10,6 +10,9 @@ func TestCodexTurnCostsDefaultsEnabled(t *testing.T) {
 	if !cfg.CodexTurnCosts.Enabled {
 		t.Fatal("codex-turn-costs should default to enabled")
 	}
+	if !cfg.CodexTurnCosts.UpstreamEstimates {
+		t.Fatal("upstream-estimates should default to enabled")
+	}
 }
 
 func TestCodexTurnCostsLoadsV8Layout(t *testing.T) {
@@ -17,6 +20,7 @@ func TestCodexTurnCostsLoadsV8Layout(t *testing.T) {
 observability:
   codex-turn-costs:
     enabled: false
+    upstream-estimates: false
     prices:
       gpt-5.5:
         input: 5
@@ -28,6 +32,9 @@ observability:
 	}
 	if cfg.CodexTurnCosts.Enabled {
 		t.Fatal("enabled: false was not honored")
+	}
+	if cfg.CodexTurnCosts.UpstreamEstimates {
+		t.Fatal("upstream-estimates: false was not honored")
 	}
 	got := cfg.CodexTurnCosts.Prices["gpt-5.5"]
 	if got != (CodexTurnCostPrice{Input: 5, CachedInput: 0.5, Output: 30}) {

@@ -99,12 +99,11 @@ func (e *CodexExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Aut
 		return nil
 	}
 	apiKey, _ := codexCredsForRequest(req.Context(), auth, req.Header)
-	if codexUseSIWCForRequest(req.Context(), auth, req.Header) && req.URL != nil && req.URL.Scheme == "https" &&
-		req.URL.Host == "chatgpt.com" && req.URL.Path == "/backend-api/codex/alpha/search" {
-		// ChatGPT Alpha Search requires the original OAuth partition, not SIWC.
+	if codexUseSIWCForRequest(req.Context(), auth, req.Header) && codexNeedsOriginalOAuth(req.URL) {
+		// ChatGPT Alpha Search and usage estimates require the original OAuth partition, not SIWC.
 		apiKey, _ = auth.Metadata["access_token"].(string)
 		if strings.TrimSpace(apiKey) == "" {
-			return statusErr{code: http.StatusUnauthorized, msg: "codex executor: original OAuth access_token is required for ChatGPT Alpha Search"}
+			return statusErr{code: http.StatusUnauthorized, msg: "codex executor: original OAuth access_token is required for this ChatGPT endpoint"}
 		}
 	} else if errSIWC := ensureCodexSIWCCredentialsForRequest(req.Context(), auth, apiKey, req.Header); errSIWC != nil {
 		return errSIWC
@@ -121,6 +120,13 @@ func (e *CodexExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Aut
 	util.ApplyCustomHeadersFromAttrs(req, attrs)
 	alignCodexContentEncoding(req)
 	return nil
+}
+
+func codexNeedsOriginalOAuth(u *neturl.URL) bool {
+	if u == nil || u.Scheme != "https" || u.Host != "chatgpt.com" {
+		return false
+	}
+	return u.Path == "/backend-api/codex/alpha/search" || u.Path == "/backend-api/wham/usage/thread-estimates/query"
 }
 
 // HttpRequest injects Codex credentials into the request and executes it.

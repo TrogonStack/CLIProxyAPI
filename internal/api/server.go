@@ -257,6 +257,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.managementRoutesEnabled.Store(hasManagementSecret)
 	redisqueue.SetEnabled(hasManagementSecret || (cfg != nil && cfg.Home.Enabled))
 	turncost.Default().Configure(cfg)
+	if authManager != nil {
+		turncost.Default().SetAuthSource(authManager)
+	}
 	if hasManagementSecret {
 		s.registerManagementRoutes()
 	}

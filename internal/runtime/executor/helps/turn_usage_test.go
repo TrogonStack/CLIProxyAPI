@@ -36,3 +36,15 @@ func TestUsageReporterTurnIDFromHeaderThenBody(t *testing.T) {
 		t.Fatalf("TurnID = %q, want turn-body kept when a body has none", got)
 	}
 }
+
+func TestUsageReporterThreadIDFromHeaderThenBody(t *testing.T) {
+	ctx := internallogging.WithClientRequestMetadata(context.Background(), internallogging.ClientRequestMetadata{ThreadID: "thread-header"})
+	reporter := newCodexTestReporter(ctx, "gpt-5", nil)
+	if got := reporter.buildRecord(usage.Detail{}, false).ThreadID; got != "thread-header" {
+		t.Fatalf("ThreadID = %q, want thread-header", got)
+	}
+	reporter.SetTranslatedRequestMetadata([]byte(`{"client_metadata":{"thread_id":"thread-body"}}`), "codex")
+	if got := reporter.buildRecord(usage.Detail{}, false).ThreadID; got != "thread-body" {
+		t.Fatalf("ThreadID = %q, want thread-body", got)
+	}
+}

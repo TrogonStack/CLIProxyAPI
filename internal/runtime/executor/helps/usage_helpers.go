@@ -48,6 +48,7 @@ type UsageReporter struct {
 	sessionID            string
 	parentSessionID      string
 	turnID               string
+	threadID             string
 	source               string
 	reasoning            string
 	serviceTier          string
@@ -143,6 +144,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		sessionID:       sessionID,
 		parentSessionID: parentSessionID,
 		turnID:          clientMeta.TurnID,
+		threadID:        clientMeta.ThreadID,
 		source:          resolveUsageSource(auth, apiKey),
 		authType:        resolveUsageAuthType(auth),
 		reasoning:       usage.ReasoningEffortFromContext(ctx),
@@ -361,6 +363,9 @@ func (r *UsageReporter) SetTranslatedRequestMetadata(payload []byte, format stri
 	// WebSocket frames carry their own turn id; the handshake header only names the first turn.
 	if turnID := usage.TurnIDFromRequestBody(payload); turnID != "" {
 		r.turnID = turnID
+	}
+	if threadID := usage.ThreadIDFromRequestBody(payload); threadID != "" {
+		r.threadID = threadID
 	}
 	r.effectiveServiceTier = extractEffectiveServiceTier(payload)
 }
@@ -698,6 +703,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		SessionID:            r.sessionID,
 		ParentSessionID:      r.parentSessionID,
 		TurnID:               r.turnID,
+		ThreadID:             r.threadID,
 		AuthID:               r.authID,
 		AuthIndex:            r.authIndex,
 		AccessTokenSHA256:    r.accessTokenFingerprint(),

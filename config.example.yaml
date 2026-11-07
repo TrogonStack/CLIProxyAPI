@@ -1266,6 +1266,9 @@ observability:
   codex-turn-costs:
     # Default: true. When false the endpoint returns 404 and Codex stops asking.
     enabled: true
+    # Default: true. Prefer ChatGPT's own estimate for each turn, fetched with the credential that
+    # served it. Accounts without access (403) and turns it has not settled use the local prices.
+    upstream-estimates: true
     # Optional per-model USD prices per 1M tokens that add to or override the built-in table.
     # Models with no price (built-in or here) are reported as pending.
     # prices:

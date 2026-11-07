@@ -47,6 +47,8 @@ type Record struct {
 
 	// TurnID identifies the Codex turn that issued the request, empty for other clients.
 	TurnID string
+	// ThreadID is the Codex thread that owns TurnID.
+	ThreadID string
 
 	AuthID    string
 	AuthIndex string

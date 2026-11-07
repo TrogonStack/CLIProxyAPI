@@ -428,6 +428,9 @@ type PprofConfig struct {
 type CodexTurnCostsConfig struct {
 	// Enabled toggles recording per-turn usage and serving the endpoint. Default: true.
 	Enabled bool `yaml:"enabled" json:"enabled"`
+	// UpstreamEstimates asks ChatGPT for its own per-turn estimate with the same credential
+	// that served the turn, and uses the local prices only when it has none. Default: true.
+	UpstreamEstimates bool `yaml:"upstream-estimates" json:"upstream-estimates"`
 	// Prices adds or overrides USD prices per model name, per 1M tokens.
 	Prices map[string]CodexTurnCostPrice `yaml:"prices,omitempty" json:"prices,omitempty"`
 }

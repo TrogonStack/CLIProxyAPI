@@ -68,7 +68,7 @@ func TestQueryPricesTurn(t *testing.T) {
 		InputTokens: 1_000_000, OutputTokens: 0,
 	}))
 
-	got := s.Query([]string{"turn-1"})
+	got := s.Query(context.Background(), []string{"turn-1"})
 	if len(got) != 1 || got[0].Status != "priced" {
 		t.Fatalf("Query() = %+v", got)
 	}
@@ -92,7 +92,7 @@ func TestQueryPrefersResponseModelThenFallsBack(t *testing.T) {
 	rec := codexRecord("turn-1", "r1", "gpt-5.1-codex", coreusage.Detail{InputTokens: 1_000_000})
 	rec.ResponseModel = "not-priced"
 	s.HandleUsage(context.Background(), rec)
-	got := s.Query([]string{"turn-1"})
+	got := s.Query(context.Background(), []string{"turn-1"})
 	if got[0].Status != "priced" || got[0].TotalUSD != "1.2500000000" {
 		t.Fatalf("Query() = %+v", got[0])
 	}
@@ -104,7 +104,7 @@ func TestQueryPendingCases(t *testing.T) {
 	s.HandleUsage(context.Background(), codexRecord("mixed", "r1", "gpt-5", coreusage.Detail{InputTokens: 1}))
 	s.HandleUsage(context.Background(), codexRecord("mixed", "r2", "mystery-model", coreusage.Detail{InputTokens: 1}))
 
-	for _, got := range s.Query([]string{"unknown", "unpriced", "mixed"}) {
+	for _, got := range s.Query(context.Background(), []string{"unknown", "unpriced", "mixed"}) {
 		if got.Status != "pending" || got.TotalUSD != "" || got.EventCount != nil || got.Responses != nil {
 			t.Errorf("turn %s = %+v, want bare pending", got.TurnID, got)
 		}
@@ -116,7 +116,7 @@ func TestQueryUsesConfiguredPrices(t *testing.T) {
 		"mystery-model": {Input: 2, CachedInput: 1, Output: 4},
 	})
 	s.HandleUsage(context.Background(), codexRecord("t", "r", "mystery-model", coreusage.Detail{InputTokens: 1_000_000}))
-	if got := s.Query([]string{"t"})[0]; got.Status != "priced" || got.TotalUSD != "2.0000000000" {
+	if got := s.Query(context.Background(), []string{"t"})[0]; got.Status != "priced" || got.TotalUSD != "2.0000000000" {
 		t.Fatalf("Query() = %+v", got)
 	}
 }

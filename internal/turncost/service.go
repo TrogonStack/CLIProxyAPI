@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -41,11 +42,15 @@ type Service struct {
 	store   *Store
 	prices  atomic.Pointer[PriceTable]
 	enabled atomic.Bool
+	// estimates is the upstream-estimates switch.
+	estimates atomic.Bool
+	upstream  upstreamState
+	now       func() time.Time
 }
 
 // NewService returns a disabled service backed by store.
 func NewService(store *Store) *Service {
-	s := &Service{store: store}
+	s := &Service{store: store, now: time.Now}
 	s.prices.Store(NewPriceTable(nil))
 	return s
 }
@@ -66,10 +71,12 @@ func (s *Service) Configure(cfg *config.Config) {
 	}
 	if cfg == nil {
 		s.enabled.Store(false)
+		s.estimates.Store(false)
 		return
 	}
 	s.prices.Store(NewPriceTable(cfg.CodexTurnCosts.Prices))
 	s.enabled.Store(cfg.CodexTurnCosts.Enabled)
+	s.estimates.Store(cfg.CodexTurnCosts.UpstreamEstimates)
 }
 
 // Enabled reports whether the feature is on.
@@ -100,24 +107,45 @@ func (s *Service) HandleUsage(_ context.Context, record coreusage.Record) {
 		Model:           record.ResponseModel,
 		RequestedModel:  record.Model,
 		ReasoningEffort: record.ReasoningEffort,
+		AuthID:          strings.TrimSpace(record.AuthID),
+		ThreadID:        strings.TrimSpace(record.ThreadID),
 	})
 }
 
-// Query prices each requested turn. A turn that is unknown, expired, or has a response
-// without a known model price is reported as pending, which Codex retries a few times
-// before it stops asking about that turn.
-func (s *Service) Query(turnIDs []string) []TurnCost {
+// Query prices each requested turn, preferring ChatGPT's own estimate when it covers every
+// response the proxy recorded and falling back to the local price table. A turn that is
+// unknown, expired, or has a response without a known model price is reported as pending,
+// which Codex retries a few times before it stops asking about that turn.
+func (s *Service) Query(ctx context.Context, turnIDs []string) []TurnCost {
 	prices := s.prices.Load()
+	var upstream map[string]TurnCost
+	var source AuthSource
+	if s.estimates.Load() {
+		source = s.authSource()
+	}
+	turns := make(map[string]Turn, len(turnIDs))
+	for _, id := range turnIDs {
+		if turn, ok := s.store.Get(id); ok {
+			turns[id] = turn
+		}
+	}
+	if source != nil {
+		upstream = s.fetchUpstream(ctx, source, turns)
+	}
 	out := make([]TurnCost, 0, len(turnIDs))
 	for _, id := range turnIDs {
-		out = append(out, s.queryTurn(prices, id))
+		if cost, ok := upstream[id]; ok {
+			out = append(out, cost)
+			continue
+		}
+		out = append(out, s.queryTurn(prices, id, turns))
 	}
 	return out
 }
 
-func (s *Service) queryTurn(prices *PriceTable, turnID string) TurnCost {
+func (s *Service) queryTurn(prices *PriceTable, turnID string, turns map[string]Turn) TurnCost {
 	pending := TurnCost{TurnID: turnID, Status: statusPending}
-	turn, ok := s.store.Get(turnID)
+	turn, ok := turns[turnID]
 	if !ok || len(turn.Responses) == 0 {
 		return pending
 	}

@@ -2,6 +2,7 @@ package turncost
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,5 +92,23 @@ func TestStoreRejectsOversizedAndEmptyIDs(t *testing.T) {
 	s.Add("turn", Response{})
 	if s.Len() != 0 {
 		t.Fatalf("Len() = %d, want 0", s.Len())
+	}
+}
+
+func TestStoreTracksAuthAndThread(t *testing.T) {
+	s := NewStore(time.Hour, 10, 10)
+	s.Add("t", Response{ID: "r1", AuthID: "a", ThreadID: "th"})
+	s.Add("t", Response{ID: "r2", AuthID: "a"})
+	turn, _ := s.Get("t")
+	if turn.AuthID != "a" || turn.ThreadID != "th" || turn.MixedAuth {
+		t.Fatalf("turn = %+v", turn)
+	}
+	s.Add("t", Response{ID: "r3", AuthID: "b", ThreadID: "th"})
+	if turn, _ = s.Get("t"); turn.AuthID != "b" || !turn.MixedAuth {
+		t.Fatalf("turn = %+v, want mixed", turn)
+	}
+	s.Add("long", Response{ID: "r", AuthID: strings.Repeat("x", maxIDLength+1)})
+	if turn, _ = s.Get("long"); turn.AuthID != "" {
+		t.Fatalf("overlong auth id kept: %q", turn.AuthID)
 	}
 }

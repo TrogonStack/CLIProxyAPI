@@ -37,5 +37,5 @@ func (s *Service) Handler(c *gin.Context) {
 	if len(ids) > maxQueryTurns {
 		ids = ids[:maxQueryTurns]
 	}
-	c.JSON(http.StatusOK, queryResponse{Turns: s.Query(ids)})
+	c.JSON(http.StatusOK, queryResponse{Turns: s.Query(c.Request.Context(), ids)})
 }
