@@ -137,7 +137,25 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          git push origin HEAD:main
+          # GITHUB_TOKEN cannot push commits that touch .github/workflows, and
+          # upstream changes those every month or so. Say so in an issue
+          # instead of leaving a bare red run.
+          if ! git push origin HEAD:main; then
+            title="Upstream sync needs a manual push: $TAG"
+            if git diff --quiet HEAD^1 HEAD -- .github/workflows; then
+              reason="The push to main was rejected."
+            else
+              reason="The merge changes .github/workflows, which GITHUB_TOKEN may not push."
+            fi
+            printf '%s\n\nRun: %s\n\nPush it locally with: git merge %s, then git push origin main.\n' \
+              "$reason" "$RUN_URL" "$TAG" > "$RUNNER_TEMP/push-body.txt"
+            existing="$(gh issue list --state open --limit 200 --json title \
+              --jq "[.[] | select(.title == \"$title\")] | length")"
+            if [ "$existing" = "0" ]; then
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/push-body.txt"
+            fi
+            exit 1
+          fi
           # Pushes made with GITHUB_TOKEN do not trigger workflows, but
           # workflow_dispatch does, so start the image build explicitly.
           gh workflow run trogonstack-image.yml --ref main
