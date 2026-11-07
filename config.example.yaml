@@ -1261,6 +1261,19 @@ observability:
     enable: false
     addr: "127.0.0.1:8316"
 
+  # Serves POST /v1/analytics/codex/turn-costs so Codex can show the USD cost of each turn.
+  # Usage per turn is kept in a bounded in-memory store (24h TTL, capped entries) and is lost on restart.
+  codex-turn-costs:
+    # Default: true. When false the endpoint returns 404 and Codex stops asking.
+    enabled: true
+    # Optional per-model USD prices per 1M tokens that add to or override the built-in table.
+    # Models with no price (built-in or here) are reported as pending.
+    # prices:
+    #   gpt-5.5:
+    #     input: 5.00
+    #     cached-input: 0.50
+    #     output: 30.00
+
 # Standard dynamic library plugins are trusted in-process code. They are disabled by default.
 # Build Go examples with go build -buildmode=c-shared for the target GOOS/GOARCH.
 # Other languages can implement the same C ABI and JSON method protocol.

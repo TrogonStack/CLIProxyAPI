@@ -423,6 +423,22 @@ type PprofConfig struct {
 	Addr string `yaml:"addr" json:"addr"`
 }
 
+// CodexTurnCostsConfig controls the POST /v1/analytics/codex/turn-costs endpoint that
+// Codex polls to show the USD cost of each turn.
+type CodexTurnCostsConfig struct {
+	// Enabled toggles recording per-turn usage and serving the endpoint. Default: true.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Prices adds or overrides USD prices per model name, per 1M tokens.
+	Prices map[string]CodexTurnCostPrice `yaml:"prices,omitempty" json:"prices,omitempty"`
+}
+
+// CodexTurnCostPrice holds USD prices per 1M tokens for one model.
+type CodexTurnCostPrice struct {
+	Input       float64 `yaml:"input" json:"input"`
+	CachedInput float64 `yaml:"cached-input" json:"cached-input"`
+	Output      float64 `yaml:"output" json:"output"`
+}
+
 // DiscoveryInterfacesConfig specifies interface inclusion and exclusion rules.
 type DiscoveryInterfacesConfig struct {
 	Include []string `yaml:"include" json:"include"`

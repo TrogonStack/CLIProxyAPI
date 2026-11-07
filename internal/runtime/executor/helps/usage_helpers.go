@@ -47,6 +47,7 @@ type UsageReporter struct {
 	isNativeKey          bool
 	sessionID            string
 	parentSessionID      string
+	turnID               string
 	source               string
 	reasoning            string
 	serviceTier          string
@@ -141,6 +142,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		isNativeKey:     isNativeKey,
 		sessionID:       sessionID,
 		parentSessionID: parentSessionID,
+		turnID:          clientMeta.TurnID,
 		source:          resolveUsageSource(auth, apiKey),
 		authType:        resolveUsageAuthType(auth),
 		reasoning:       usage.ReasoningEffortFromContext(ctx),
@@ -356,6 +358,10 @@ func (r *UsageReporter) SetTranslatedRequestMetadata(payload []byte, format stri
 		return
 	}
 	r.reasoning = thinking.ExtractTranslatedReasoningEffort(payload, format)
+	// WebSocket frames carry their own turn id; the handshake header only names the first turn.
+	if turnID := usage.TurnIDFromRequestBody(payload); turnID != "" {
+		r.turnID = turnID
+	}
 	r.effectiveServiceTier = extractEffectiveServiceTier(payload)
 }
 
@@ -691,6 +697,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		AccessProvider:       r.accessProvider,
 		SessionID:            r.sessionID,
 		ParentSessionID:      r.parentSessionID,
+		TurnID:               r.turnID,
 		AuthID:               r.authID,
 		AuthIndex:            r.authIndex,
 		AccessTokenSHA256:    r.accessTokenFingerprint(),
@@ -1572,6 +1579,7 @@ func ParseCodexUsageWithOutputItems(data []byte, itemsByIndex map[int64][]byte, 
 			UpstreamServiceTier: responseServiceTier,
 		}, true
 	}
+	detail.ResponseID = strings.Clone(strings.TrimSpace(root.Get("response.id").String()))
 	detail.ResponseServiceTier = responseServiceTier
 	if detail.UpstreamServiceTier == "" {
 		detail.UpstreamServiceTier = responseServiceTier

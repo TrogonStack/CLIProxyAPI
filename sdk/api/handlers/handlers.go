@@ -636,6 +636,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			UserAgent:        strings.TrimSpace(c.Request.UserAgent()),
 			SessionID:        sessionID,
 			ParentSessionID:  parentSessionID,
+			TurnID:           coreusage.TurnIDFromTurnMetadata(c.Request.Header.Get("X-Codex-Turn-Metadata")),
 		})
 	}
 	newCtx = logging.WithResponseStatusHolder(newCtx)

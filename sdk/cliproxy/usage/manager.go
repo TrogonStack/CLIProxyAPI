@@ -44,8 +44,12 @@ type Record struct {
 	AccessProvider  string
 	SessionID       string
 	ParentSessionID string
-	AuthID          string
-	AuthIndex       string
+
+	// TurnID identifies the Codex turn that issued the request, empty for other clients.
+	TurnID string
+
+	AuthID    string
+	AuthIndex string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -109,6 +113,9 @@ type Detail struct {
 	TotalTokens         int64
 	TokenBreakdown      TokenBreakdown
 	ResponseServiceTier string
+
+	// ResponseID is the upstream response id from Responses API terminal events.
+	ResponseID string
 
 	CacheCreation5mTokens    *int64
 	CacheCreation30mTokens   *int64

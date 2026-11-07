@@ -23,6 +23,9 @@ type ClientRequestMetadata struct {
 	NodeKind         string
 	IsFork           bool
 	IsCompaction     bool
+
+	// TurnID is the Codex turn id from the x-codex-turn-metadata header.
+	TurnID string
 }
 
 type responseStatusHolder struct {
