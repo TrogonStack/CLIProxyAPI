@@ -16,10 +16,12 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.17.4
+	github.com/klauspost/compress v1.20.0
 	github.com/libp2p/zeroconf/v2 v2.2.0
 	github.com/miekg/dns v1.1.43
 	github.com/minio/minio-go/v7 v7.0.66
+	github.com/nats-io/nats.go v1.55.0
+	github.com/nats-io/nkeys v0.4.17
 	github.com/pion/ice/v4 v4.3.0
 	github.com/pion/interceptor v0.1.45
 	github.com/pion/rtp v1.10.4
@@ -46,7 +48,7 @@ replace github.com/MoeForge/moego v0.1.0-alpha.1 => github.com/router-for-me/moe
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
-	github.com/nats-io/nkeys v0.4.17 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
 	github.com/pion/logging v0.2.4 // indirect
