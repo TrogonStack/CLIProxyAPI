@@ -1,13 +1,14 @@
 name: trogonstack-sync
 
-# Merges the newest stable upstream release tag into main.
+# Merges the newest stable upstream release tag into main every Friday, so the
+# image is ready for the homelab Renovate batch on Saturday.
 # main = upstream release tag + our patch commits. This repo must never carry
 # or push git tags: upstream's release and docker workflows trigger on tag
 # pushes. Upstream tags are fetched into the runner only.
 
 on:
   schedule:
-    - cron: '17 6 * * *'
+    - cron: '17 6 * * 5'
   workflow_dispatch:
 
 permissions:
