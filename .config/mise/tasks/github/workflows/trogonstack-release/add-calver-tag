@@ -9,11 +9,14 @@ digest="$(crane digest "$IMAGE:$COMMIT" 2>/dev/null)" || {
   exit 1
 }
 
-pairs="$(
-  crane ls "$IMAGE" | grep -E '^[0-9]{4}\.[0-9]{3,4}\.[0-9]+$' | while read -r tag; do
-    echo "$tag $(crane digest "$IMAGE:$tag")"
-  done
-)" || true
+# A registry error must stop the release: a missing pair would hide an earlier
+# release of this commit or reuse a taken N. Only "no version tags" is fine.
+all_tags="$(crane ls "$IMAGE")"
+pairs=""
+for tag in $(printf '%s\n' "$all_tags" | grep -E '^[0-9]{4}\.[0-9]{3,4}\.[0-9]+$' || true); do
+  tagdigest="$(crane digest "$IMAGE:$tag")"
+  pairs+="$tag $tagdigest"$'\n'
+done
 
 # Month without padding followed by a two digit day: 5 April is 405.
 today="$(date -u +%Y.%-m%d)"

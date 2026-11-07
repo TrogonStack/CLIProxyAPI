@@ -10,7 +10,8 @@ status="$(ghcr_manifest_status "$IMAGE" "$head" "$ACTOR" "$REGISTRY_TOKEN")"
 # Only a 404 means the image is missing. Any other answer is an outage
 # or an auth problem, and building again would move the commit tag.
 if [ "$status" = "200" ]; then
-  gh workflow run trogonstack-release.yml --ref main
+  # Release the commit whose image was checked, even if main moves meanwhile.
+  gh workflow run trogonstack-release.yml --ref main -f commit="$head"
   echo "main is current with upstream; dispatched the release for $head" >> "$GITHUB_STEP_SUMMARY"
 elif [ "$status" = "404" ]; then
   gh workflow run trogonstack-image.yml --ref main -f release=true
