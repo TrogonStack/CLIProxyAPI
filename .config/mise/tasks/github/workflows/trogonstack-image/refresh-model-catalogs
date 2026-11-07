@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Refresh the model catalogs with upstream's script"
+set -euo pipefail
+exec bash "$MISE_PROJECT_ROOT/.github/scripts/refresh-model-catalogs.sh"

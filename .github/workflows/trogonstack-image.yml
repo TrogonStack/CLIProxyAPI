@@ -15,12 +15,9 @@ permissions:
   contents: read
 
 env:
-  # <registry>/images/<namespace>/<name>: the namespace is the source repository
-  # and the name is the deployable (ADR 6497710059).
   # A pull request pushes only when it comes from this repository, so fork PRs
   # build without a registry write.
   PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-  IMAGE: ghcr.io/trogonstack/images/cliproxyapi/cli-proxy-api
 
 jobs:
   image:
@@ -37,8 +34,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/setup-mise
+      - id: image
+        run: mise run github:workflows:trogonstack-image:image-name
       - name: Refresh models catalog
-        run: bash .github/scripts/refresh-model-catalogs.sh
+        run: mise run github:workflows:trogonstack-image:refresh-model-catalogs
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         if: env.PUSH == 'true'
@@ -54,7 +54,7 @@ jobs:
           # Label the pull request head commit, not the merge commit.
           DOCKER_METADATA_PR_HEAD_SHA: 'true'
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=sha,format=long,prefix=,enable=${{ github.event_name != 'pull_request' }}
             type=raw,value=pr-${{ github.event.pull_request.head.sha }},enable=${{ github.event_name == 'pull_request' }}
@@ -77,8 +77,8 @@ jobs:
             COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
       - if: env.PUSH == 'true'
         env:
-          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
-        run: echo "\`${REF}\`" >> "$GITHUB_STEP_SUMMARY"
+          REF: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: mise run github:workflows:trogonstack-image:summary
 
   release:
     needs: image

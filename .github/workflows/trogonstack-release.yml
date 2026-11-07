@@ -29,8 +29,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/trogonstack/images/cliproxyapi/cli-proxy-api
-  CRANE: github.com/google/go-containerregistry/cmd/crane@v0.22.1
   GH_TOKEN: ${{ github.token }}
 
 jobs:
@@ -41,80 +39,22 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # The mise tasks and configuration live in the repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: '1.25'
-          cache: false
-      - name: Install crane
-        run: |
-          go install "$CRANE"
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mise
       - name: Log in to ghcr.io
         env:
           ACTOR: ${{ github.actor }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$TOKEN" | crane auth login ghcr.io -u "$ACTOR" --password-stdin
+        run: mise run github:workflows:trogonstack-release:registry-login
       - name: Resolve the commit
         id: commit
         env:
           INPUT_COMMIT: ${{ inputs.commit }}
-        run: |
-          sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/${INPUT_COMMIT:-main}" --jq .sha)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        run: mise run github:workflows:trogonstack-release:resolve-commit
       - name: Add the CalVer tag
         env:
           COMMIT: ${{ steps.commit.outputs.sha }}
-        run: |
-          set -euo pipefail
-
-          # BEGIN decide
-          # decide <digest> <today YYYY.MDD> reads "<tag> <digest>" lines of the
-          # existing version tags on stdin. It prints "released <tag>" when a
-          # tag already points at <digest>, otherwise "next <YYYY.MDD.N>".
-          decide() {
-            local digest="$1" today="$2" tag tagdigest n=0
-            while read -r tag tagdigest; do
-              [ -n "$tag" ] || continue
-              if [ "$tagdigest" = "$digest" ]; then
-                echo "released $tag"
-                return 0
-              fi
-              case "$tag" in "$today".*) n=$((n + 1)) ;; esac
-            done
-            echo "next $today.$n"
-          }
-          # END decide
-
-          digest="$(crane digest "$IMAGE:$COMMIT" 2>/dev/null)" || {
-            echo "No image $IMAGE:$COMMIT. Run trogonstack-image for that commit first." >&2
-            exit 1
-          }
-
-          pairs="$(
-            crane ls "$IMAGE" | grep -E '^[0-9]{4}\.[0-9]{3,4}\.[0-9]+$' | while read -r tag; do
-              echo "$tag $(crane digest "$IMAGE:$tag")"
-            done
-          )" || true
-
-          # Month without padding followed by a two digit day: 5 April is 405.
-          today="$(date -u +%Y.%-m%d)"
-          result="$(printf '%s\n' "$pairs" | decide "$digest" "$today")"
-
-          case "$result" in
-            released\ *)
-              tag="${result#released }"
-              echo "$COMMIT already released as $tag ($digest)"
-              printf 'Already released as %s\n\n%s@%s\n' "$tag" "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-              ;;
-          esac
-
-          version="${result#next }"
-          crane tag "$IMAGE:$COMMIT" "$version"
-
-          tagged="$(crane digest "$IMAGE:$version")"
-          if [ "$tagged" != "$digest" ]; then
-            echo "Tag $version resolves to $tagged, expected $digest" >&2
-            exit 1
-          fi
-          printf 'Released %s\n\n%s:%s@%s\n' "$version" "$IMAGE" "$version" "$digest" >> "$GITHUB_STEP_SUMMARY"
+        run: mise run github:workflows:trogonstack-release:add-calver-tag

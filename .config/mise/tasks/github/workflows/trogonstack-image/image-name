@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Expose the image name as the step output name"
+set -euo pipefail
+source "$MISE_PROJECT_ROOT/.config/mise/lib/image.sh"
+echo "name=$IMAGE" >> "$GITHUB_OUTPUT"

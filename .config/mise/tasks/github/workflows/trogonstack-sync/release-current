@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Release current main, building it first when it has no image"
+set -euo pipefail
+source "$MISE_PROJECT_ROOT/.config/mise/lib/image.sh"
+source "$MISE_PROJECT_ROOT/.config/mise/lib/ghcr.sh"
+
+head="$(git rev-parse HEAD)"
+# shellcheck disable=SC2153
+status="$(ghcr_manifest_status "$IMAGE" "$head" "$ACTOR" "$REGISTRY_TOKEN")"
+# Only a 404 means the image is missing. Any other answer is an outage
+# or an auth problem, and building again would move the commit tag.
+if [ "$status" = "200" ]; then
+  gh workflow run trogonstack-release.yml --ref main
+  echo "main is current with upstream; dispatched the release for $head" >> "$GITHUB_STEP_SUMMARY"
+elif [ "$status" = "404" ]; then
+  gh workflow run trogonstack-image.yml --ref main -f release=true
+  echo "main is current with upstream; $IMAGE:$head not found, dispatched the image build with release" >> "$GITHUB_STEP_SUMMARY"
+else
+  echo "Registry answered HTTP $status for $IMAGE:$head" >&2
+  exit 1
+fi
