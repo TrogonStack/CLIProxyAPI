@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Log crane in to ghcr.io"
+set -euo pipefail
+printf '%s' "$TOKEN" | crane auth login ghcr.io -u "$ACTOR" --password-stdin

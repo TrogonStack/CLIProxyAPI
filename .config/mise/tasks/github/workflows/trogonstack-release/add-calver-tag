@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#MISE description="Add the next CalVer tag to the image built for the commit"
+set -euo pipefail
+source "$MISE_PROJECT_ROOT/.config/mise/lib/image.sh"
+source "$MISE_PROJECT_ROOT/.config/mise/lib/calver.sh"
+
+digest="$(crane digest "$IMAGE:$COMMIT" 2>/dev/null)" || {
+  echo "No image $IMAGE:$COMMIT. Run trogonstack-image for that commit first." >&2
+  exit 1
+}
+
+# A registry error must stop the release: a missing pair would hide an earlier
+# release of this commit or reuse a taken N. Only "no version tags" is fine.
+all_tags="$(crane ls "$IMAGE")"
+pairs=""
+for tag in $(printf '%s\n' "$all_tags" | grep -E '^[0-9]{4}\.[0-9]{3,4}\.[0-9]+$' || true); do
+  tagdigest="$(crane digest "$IMAGE:$tag")"
+  pairs+="$tag $tagdigest"$'\n'
+done
+
+# Month without padding followed by a two digit day: 5 April is 405.
+today="$(date -u +%Y.%-m%d)"
+result="$(printf '%s\n' "$pairs" | decide "$digest" "$today")"
+
+case "$result" in
+  released\ *)
+    tag="${result#released }"
+    echo "$COMMIT already released as $tag ($digest)"
+    printf 'Already released as %s\n\n%s@%s\n' "$tag" "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
+    exit 0
+    ;;
+esac
+
+version="${result#next }"
+crane tag "$IMAGE:$COMMIT" "$version"
+
+tagged="$(crane digest "$IMAGE:$version")"
+if [ "$tagged" != "$digest" ]; then
+  echo "Tag $version resolves to $tagged, expected $digest" >&2
+  exit 1
+fi
+printf 'Released %s\n\n%s:%s@%s\n' "$version" "$IMAGE" "$version" "$digest" >> "$GITHUB_STEP_SUMMARY"

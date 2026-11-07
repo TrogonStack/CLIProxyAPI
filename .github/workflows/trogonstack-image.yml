@@ -2,15 +2,22 @@ name: trogonstack-image
 
 on:
   push:
-    branches: [main, 'yordis/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Tag the built image with the next CalVer version (main only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/trogonstack/cli-proxy-api
+  # A pull request pushes only when it comes from this repository, so fork PRs
+  # build without a registry write.
+  PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
 jobs:
   image:
@@ -27,49 +34,58 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/setup-mise
+      - id: image
+        run: mise run github:workflows:trogonstack-image:image-name
       - name: Refresh models catalog
-        run: bash .github/scripts/refresh-model-catalogs.sh
+        run: mise run github:workflows:trogonstack-image:refresh-model-catalogs
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        if: github.event_name != 'pull_request'
+        if: env.PUSH == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compute fork version tag
-        id: forkver
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Upstream tags are fetched into the runner only, never pushed back.
-          git fetch --no-tags https://github.com/router-for-me/CLIProxyAPI.git '+refs/tags/v*:refs/tags/v*'
-          base="$(git tag --merged HEAD -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
-          if [ -z "$base" ]; then
-            echo "No upstream release tag reachable from HEAD" >&2
-            exit 1
-          fi
-          n="$(git rev-list --count "$base..HEAD")"
-          echo "value=${base}-trogonstack.${n}" >> "$GITHUB_OUTPUT"
-          echo "Fork image tag: \`${base}-trogonstack.${n}\`" >> "$GITHUB_STEP_SUMMARY"
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        env:
+          # Annotations land on both the image index and its manifest.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+          # Label the pull request head commit, not the merge commit.
+          DOCKER_METADATA_PR_HEAD_SHA: 'true'
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
-            type=sha,format=long
-            type=ref,event=branch
-            type=raw,value=${{ steps.forkver.outputs.value || 'unused' }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=long,prefix=,enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=pr-${{ github.event.pull_request.head.sha }},enable=${{ github.event_name == 'pull_request' }}
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
+          # The ADR requires a multi-platform image index. The cluster is amd64
+          # only, so the index holds one platform plus its provenance
+          # attestation. It exists so arm64 can be added here without changing
+          # any tag or path.
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          provenance: mode=min
+          push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           build-args: |
             VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-      - if: github.event_name != 'pull_request'
+            COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+      - if: env.PUSH == 'true'
         env:
-          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
-        run: echo "\`${REF}\`" >> "$GITHUB_STEP_SUMMARY"
+          REF: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: mise run github:workflows:trogonstack-image:summary
+
+  release:
+    needs: image
+    if: github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/trogonstack-release.yml
+    with:
+      commit: ${{ github.sha }}

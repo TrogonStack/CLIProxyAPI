@@ -1,0 +1,24 @@
+name: Set up mise
+description: Install a pinned mise release after verifying its sha256 checksum.
+
+# jdx/mise-action is not an allowed action, so the release binary is installed
+# directly. This runs before mise exists, so it cannot be a mise task
+# (ADR 6647967335 puts composite action scripts under
+# .config/mise/tasks/github/actions/<name>/ only when mise can run them).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        MISE_VERSION: v2026.10.15
+        MISE_SHA256: 1c2d85dc42bef51e0bb20780093c746d6e12dfd15ca461f3979bd52cc214bc19
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/mise.tar.gz"
+        curl -fsSL -o "$archive" "https://github.com/jdx/mise/releases/download/$MISE_VERSION/mise-$MISE_VERSION-linux-x64.tar.gz"
+        echo "$MISE_SHA256  $archive" | sha256sum --check --strict
+        mkdir -p "$RUNNER_TEMP/mise-install"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/mise-install"
+        echo "$RUNNER_TEMP/mise-install/mise/bin" >> "$GITHUB_PATH"
+        # The checkout is ours, so its mise.toml needs no trust prompt.
+        echo "MISE_TRUSTED_CONFIG_PATHS=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"

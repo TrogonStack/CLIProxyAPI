@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Write the pushed image reference to the step summary"
+set -euo pipefail
+echo "\`${REF}\`" >> "$GITHUB_STEP_SUMMARY"

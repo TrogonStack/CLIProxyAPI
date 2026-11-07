@@ -1,0 +1,60 @@
+name: trogonstack-release
+
+# Releases an image by adding a CalVer tag (YYYY.MDD.N, ADR 6497710059) to the
+# image already built for a commit. It never builds, so the digest of the
+# release is the digest of the commit build. Safe to run repeatedly: a commit
+# that already carries a version tag is left alone.
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Full commit SHA to release. Defaults to the current HEAD of main.
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit to release. Defaults to the current HEAD of main.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trogonstack-release
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The mise tasks and configuration live in the repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mise
+      - name: Log in to ghcr.io
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run github:workflows:trogonstack-release:registry-login
+      - name: Resolve the commit
+        id: commit
+        env:
+          INPUT_COMMIT: ${{ inputs.commit }}
+        run: mise run github:workflows:trogonstack-release:resolve-commit
+      - name: Add the CalVer tag
+        env:
+          COMMIT: ${{ steps.commit.outputs.sha }}
+        run: mise run github:workflows:trogonstack-release:add-calver-tag

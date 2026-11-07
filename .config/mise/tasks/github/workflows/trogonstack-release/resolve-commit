@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Resolve the commit to release"
+set -euo pipefail
+sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/${INPUT_COMMIT:-main}" --jq .sha)"
+echo "sha=$sha" >> "$GITHUB_OUTPUT"

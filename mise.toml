@@ -1,0 +1,4 @@
+# Tooling for the trogonstack-* workflows only. Upstream's Go build does not
+# read this file. Tasks live in .config/mise/tasks (ADR 6647967335).
+[tools]
+"aqua:google/go-containerregistry" = "0.22.1"

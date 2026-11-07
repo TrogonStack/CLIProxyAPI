@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Pick the newest stable upstream tag and report whether main contains it"
+set -euo pipefail
+git fetch --no-tags "$UPSTREAM" '+refs/tags/v*:refs/tags/v*'
+tag="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+if [ -z "$tag" ]; then
+  echo "No stable upstream tag found" >&2
+  exit 1
+fi
+echo "tag=$tag" >> "$GITHUB_OUTPUT"
+if git merge-base --is-ancestor "refs/tags/$tag" HEAD; then
+  echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+  echo "main already contains $tag" >> "$GITHUB_STEP_SUMMARY"
+else
+  echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+fi
