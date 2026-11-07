@@ -265,6 +265,14 @@ func (s *Server) pluginManagementNoRoute(c *gin.Context) {
 		return
 	}
 	if path != "/v0/management" && !strings.HasPrefix(path, "/v0/management/") {
+		// The access log has no client identity, so record who keeps probing
+		// routes that do not exist.
+		log.WithFields(log.Fields{
+			"method":     c.Request.Method,
+			"path":       path,
+			"user_agent": c.Request.UserAgent(),
+			"originator": c.GetHeader("Originator"),
+		}).Warn("no route")
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
