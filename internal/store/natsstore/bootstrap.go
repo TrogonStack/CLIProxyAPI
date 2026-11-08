@@ -49,6 +49,8 @@ type Bootstrapped struct {
 	Features ServerFeatures
 	// Buckets maps full bucket name to its handle.
 	Buckets map[string]jetstream.KeyValue
+	// Refresh is the refresh request work queue.
+	Refresh *RefreshQueue
 }
 
 // Bucket returns the handle for a purpose such as BucketAuth.
@@ -56,8 +58,8 @@ func (b *Bootstrapped) Bucket(settings StoreSettings, purpose string) jetstream.
 	return b.Buckets[settings.BucketName(purpose)]
 }
 
-// Bootstrap probes the server, ensures every bucket and records the schema
-// marker. It is idempotent and safe for many replicas to run concurrently.
+// Bootstrap probes the server, ensures every bucket and the refresh queue, and
+// records the schema marker. It is idempotent and safe for many replicas to run concurrently.
 func Bootstrap(ctx context.Context, nc *nats.Conn, settings StoreSettings) (*Bootstrapped, error) {
 	if err := settings.Validate(); err != nil {
 		return nil, err
@@ -94,7 +96,11 @@ func Bootstrap(ctx context.Context, nc *nats.Conn, settings StoreSettings) (*Boo
 	if err := EnsureSchema(ctx, meta); err != nil {
 		return nil, err
 	}
-	return &Bootstrapped{JS: js, Features: features, Buckets: buckets}, nil
+	refresh, err := EnsureRefreshQueue(ctx, js, settings.RefreshQueue(), settings.Create)
+	if err != nil {
+		return nil, err
+	}
+	return &Bootstrapped{JS: js, Features: features, Buckets: buckets, Refresh: refresh}, nil
 }
 
 // EnsureBucket makes the bucket exist with the expected shape. With CreateAuto
