@@ -1,0 +1,53 @@
+name: wif-probe
+
+# Temporary. Asks GCP STS to exchange this job's GitHub OIDC token with each
+# provider and prints only the claims and the verdict, never a token.
+
+on:
+  push:
+    branches: [probe/wif]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  no-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe
+        run: &probe |
+          set -uo pipefail
+          pools=projects/630372936919/locations/global/workloadIdentityPools
+          echo "event=$GITHUB_EVENT_NAME repository=$GITHUB_REPOSITORY ref=$GITHUB_REF"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "RESULT: GitHub granted this job no OIDC token at all"
+            exit 0
+          fi
+          for provider in github-app-barnacle/providers/trogonstack wif-probe-2611/providers/pin-sync wif-probe-2611/providers/control; do
+            jwt="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://iam.googleapis.com/$pools/$provider" | jq -r .value)"
+            echo "--- $provider"
+            echo "$jwt" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); c=json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))); print(json.dumps({k:c.get(k) for k in ["repository_owner_id","repository_id","environment","ref","job_workflow_ref","event_name"]}))'
+            code="$(curl -sS -o "$RUNNER_TEMP/sts.json" -w '%{http_code}' https://sts.googleapis.com/v1/token \
+              --data-urlencode grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+              --data-urlencode "audience=//iam.googleapis.com/$pools/$provider" \
+              --data-urlencode scope=https://www.googleapis.com/auth/cloud-platform \
+              --data-urlencode requested_token_type=urn:ietf:params:oauth:token-type:access_token \
+              --data-urlencode subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+              --data-urlencode "subject_token=$jwt")"
+            if [ "$code" = "200" ]; then
+              echo "RESULT: ACCEPTED (HTTP 200)"
+            else
+              echo "RESULT: REJECTED (HTTP $code) $(jq -c '{error,error_description}' "$RUNNER_TEMP/sts.json")"
+            fi
+            rm -f "$RUNNER_TEMP/sts.json"
+          done
+
+  with-environment:
+    runs-on: ubuntu-latest
+    environment: github-app-barnacle
+    steps:
+      - name: Probe
+        run: *probe
