@@ -3,6 +3,8 @@ package natsstore
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -24,6 +26,7 @@ import (
 // config and credential files the rest of the process reads keep working.
 type Store struct {
 	nc         *nats.Conn
+	replicaID  string
 	auth       *AuthStore
 	config     *ConfigStore
 	spoolRoot  string
@@ -46,19 +49,39 @@ func NewStore(nc *nats.Conn, boot *Bootstrapped, settings StoreSettings, spoolDi
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return nil, fmt.Errorf("nats store: create config directory: %w", err)
 	}
-	auth, err := NewAuthStore(NewKV(settings.BucketName(BucketAuth), boot.Bucket(settings, BucketAuth)), filepath.Join(root, "auths"))
+	replicaID, err := newReplicaID()
 	if err != nil {
 		return nil, err
 	}
-	cfg := NewConfigStore(NewKV(settings.BucketName(BucketConfig), boot.Bucket(settings, BucketConfig)))
+	origin := WithOrigin(replicaID)
+	auth, err := NewAuthStore(NewKV(settings.BucketName(BucketAuth), boot.Bucket(settings, BucketAuth), origin), filepath.Join(root, "auths"))
+	if err != nil {
+		return nil, err
+	}
+	cfg := NewConfigStore(NewKV(settings.BucketName(BucketConfig), boot.Bucket(settings, BucketConfig), origin))
 	return &Store{
 		nc:         nc,
+		replicaID:  replicaID,
 		auth:       auth,
 		config:     cfg,
 		spoolRoot:  root,
 		configPath: filepath.Join(configDir, "config.yaml"),
 	}, nil
 }
+
+// newReplicaID returns an identifier unique to this process. It is never
+// reused across restarts, so values a previous run wrote are not mistaken for
+// this run's own.
+func newReplicaID() (string, error) {
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("nats store: generate replica id: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// ReplicaID identifies this process in the values it writes.
+func (s *Store) ReplicaID() string { return s.replicaID }
 
 // Close closes the NATS connection.
 func (s *Store) Close() error {

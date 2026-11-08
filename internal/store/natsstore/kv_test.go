@@ -103,3 +103,45 @@ func TestKVListSkipsDeletedAndForeignKeys(t *testing.T) {
 		t.Fatalf("List = %v", got)
 	}
 }
+
+func TestKVEnvelopeOriginAndLegacyReads(t *testing.T) {
+	raw := openAuthKV(t)
+	wrapped := NewKV(raw.bucket, raw.kv, WithOrigin("replica-a"))
+	ctx := testContext(t)
+
+	// A value written raw, as the earlier backend did, still reads back.
+	legacyRev, err := raw.Create(ctx, "legacy.json", []byte(`{"v":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := wrapped.Get(ctx, "legacy.json")
+	if err != nil || string(got.Value) != `{"v":1}` || got.Origin != "" || got.Base != 0 {
+		t.Fatalf("legacy Get = %+v, %v", got, err)
+	}
+
+	// Updating it wraps the value and records the revision it replaced.
+	rev, err := wrapped.Update(ctx, "legacy.json", []byte(`{"v":2}`), legacyRev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = raw.Get(ctx, "legacy.json")
+	if err != nil || string(got.Value) != `{"v":2}` || got.Origin != "replica-a" || got.Base != legacyRev || got.Revision != rev {
+		t.Fatalf("wrapped Get = %+v, %v", got, err)
+	}
+
+	created, err := wrapped.Create(ctx, "new.json", []byte(`{"v":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := raw.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Entry{}
+	for _, entry := range entries {
+		byID[entry.ID] = entry
+	}
+	if e := byID["new.json"]; string(e.Value) != `{"v":3}` || e.Origin != "replica-a" || e.Base != 0 || e.Revision != created {
+		t.Fatalf("listed = %+v", e)
+	}
+}
