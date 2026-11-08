@@ -209,8 +209,10 @@ type RefreshRequest struct {
 	CredentialID string `json:"credential_id"`
 	// Provider is informational, for logs and for handlers that route by it.
 	Provider string `json:"provider,omitempty"`
-	// Version is the credential version the requester saw expiring. A request
-	// for a version that was already replaced is skipped by the worker.
+	// Version is the credential version the requester saw expiring. It names the
+	// request, so asking again for the same version is not queued twice. Replicas
+	// count versions on their own, so the worker does not compare it with the
+	// credential and looks at the credential's expiry instead.
 	Version uint64 `json:"version"`
 	// RequestedBy is the replica that published the request.
 	RequestedBy string `json:"requested_by,omitempty"`
