@@ -294,6 +294,44 @@ func (s *Store) PersistConfig(ctx context.Context) error {
 	return nil
 }
 
+// CommitConfig stores the spool config file now and reports a lost
+// compare-and-swap as a ConflictError, for callers that must tell their user
+// the edit did not land. On a conflict the spool adopts the config that won, so
+// the next edit builds on it.
+func (s *Store) CommitConfig(ctx context.Context) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return fmt.Errorf("nats store: read config file: %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	unchanged := bytes.Equal(s.configData, []byte(normalizeLineEndings(string(data))))
+	s.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	_, err = s.config.Write(ctx, data)
+	if err == nil {
+		s.rememberConfig(data)
+		return nil
+	}
+	if !errors.Is(err, ErrConflict) {
+		return fmt.Errorf("nats store: commit config: %w", err)
+	}
+	remote, _, errRead := s.config.Read(ctx)
+	if errRead != nil {
+		return fmt.Errorf("nats store: adopt the winning config: %w", errRead)
+	}
+	if errWrite := s.writeConfigFile(remote); errWrite != nil {
+		return errWrite
+	}
+	return err
+}
+
 // PersistAuthFiles stores the given spool credential files in the bucket, and
 // removes the credentials whose files are gone or empty.
 func (s *Store) PersistAuthFiles(ctx context.Context, _ string, paths ...string) error {

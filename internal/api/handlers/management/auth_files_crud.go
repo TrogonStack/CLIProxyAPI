@@ -132,6 +132,9 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		if errors.Is(err, errInvalidAuthFile) {
 			status = http.StatusBadRequest
 		}
+		if errors.Is(err, coreauth.ErrStoreConflict) {
+			status = http.StatusConflict
+		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}

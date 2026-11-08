@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/store/natsstore/natstest"
 )
@@ -325,5 +326,44 @@ func TestStoreWritesCarryTheReplicaOrigin(t *testing.T) {
 	// The payload is the file, untouched by the wrapping.
 	if got := string(authEntry.Value); got != readFile(t, filepath.Join(first.AuthDir(), "origin.json")) {
 		t.Fatalf("stored payload = %q", got)
+	}
+}
+
+func TestStoreCommitConfigReportsConflictAndAdoptsWinner(t *testing.T) {
+	f := newStoreFixture(t)
+	ctx := testContext(t)
+	winner, loser := f.open(), f.open()
+	for _, s := range []*Store{winner, loser} {
+		if err := s.Bootstrap(ctx, f.example); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(winner.ConfigPath(), []byte("port: 9000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := winner.CommitConfig(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(loser.ConfigPath(), []byte("port: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := loser.CommitConfig(ctx)
+	if !errors.Is(err, ErrConflict) || !errors.Is(err, coreauth.ErrStoreConflict) {
+		t.Fatalf("stale commit = %v, want conflict", err)
+	}
+	if got := readFile(t, loser.ConfigPath()); string(got) != "port: 9000\n" {
+		t.Fatalf("spool after conflict = %q, want the winning config", got)
+	}
+
+	// The next edit builds on the adopted config and lands.
+	if err := os.WriteFile(loser.ConfigPath(), []byte("port: 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := loser.CommitConfig(ctx); err != nil {
+		t.Fatalf("retry after adopting = %v", err)
+	}
+	if data, _, err := f.open().config.Read(ctx); err != nil || string(data) != "port: 2\n" {
+		t.Fatalf("stored config = %q, %v", data, err)
 	}
 }
