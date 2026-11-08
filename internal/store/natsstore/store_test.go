@@ -298,3 +298,32 @@ func TestStoreSeedRefusesPlaintextManagementSecret(t *testing.T) {
 		t.Fatalf("refused config reached the bucket: %v", err)
 	}
 }
+
+func TestStoreWritesCarryTheReplicaOrigin(t *testing.T) {
+	f := newStoreFixture(t)
+	ctx := testContext(t)
+	first, second := f.open(), f.open()
+	if first.ReplicaID() == "" || first.ReplicaID() == second.ReplicaID() {
+		t.Fatalf("replica ids = %q and %q, want distinct and set", first.ReplicaID(), second.ReplicaID())
+	}
+	if err := first.Bootstrap(ctx, f.example); err != nil {
+		t.Fatal(err)
+	}
+	auth := testAuth("origin.json", map[string]any{"type": "test", "access_token": "tok"})
+	if _, err := first.Save(ctx, auth); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgEntry, err := first.config.kv.Get(ctx, configID)
+	if err != nil || cfgEntry.Origin != first.ReplicaID() {
+		t.Fatalf("config entry = %+v, %v", cfgEntry, err)
+	}
+	authEntry, err := first.auth.kv.Get(ctx, "origin.json")
+	if err != nil || authEntry.Origin != first.ReplicaID() || authEntry.Base != 0 {
+		t.Fatalf("auth entry = %+v, %v", authEntry, err)
+	}
+	// The payload is the file, untouched by the wrapping.
+	if got := string(authEntry.Value); got != readFile(t, filepath.Join(first.AuthDir(), "origin.json")) {
+		t.Fatalf("stored payload = %q", got)
+	}
+}

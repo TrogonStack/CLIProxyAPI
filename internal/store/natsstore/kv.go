@@ -37,6 +37,11 @@ type Entry struct {
 	Revision uint64
 	// Modified is when the revision was written.
 	Modified time.Time
+	// Origin is the replica that wrote the revision, empty for a value written
+	// before envelopes existed.
+	Origin string
+	// Base is the revision the write replaced, zero for a create or a legacy value.
+	Base uint64
 }
 
 // KV wraps a bucket so callers work with identifiers and revisions and never
@@ -44,10 +49,36 @@ type Entry struct {
 type KV struct {
 	bucket string
 	kv     jetstream.KeyValue
+	origin string
 }
 
+// KVOption customizes a KV.
+type KVOption func(*KV)
+
+// WithOrigin makes the KV wrap every value it writes with the replica that
+// wrote it. Without it values are stored raw, as the earlier backend did.
+// Reads accept both formats either way.
+func WithOrigin(origin string) KVOption { return func(k *KV) { k.origin = origin } }
+
 // NewKV wraps the bucket handle.
-func NewKV(bucket string, kv jetstream.KeyValue) *KV { return &KV{bucket: bucket, kv: kv} }
+func NewKV(bucket string, kv jetstream.KeyValue, opts ...KVOption) *KV {
+	k := &KV{bucket: bucket, kv: kv}
+	for _, opt := range opts {
+		opt(k)
+	}
+	return k
+}
+
+// Origin returns the replica identifier written with values, empty when values are stored raw.
+func (k *KV) Origin() string { return k.origin }
+
+// wrap prepares a value for storage.
+func (k *KV) wrap(value []byte, base uint64) ([]byte, error) {
+	if k.origin == "" {
+		return value, nil
+	}
+	return encodeEnvelope(k.origin, base, value)
+}
 
 // Get returns the live value for the identifier, or ErrNotFound.
 func (k *KV) Get(ctx context.Context, id string) (Entry, error) {
@@ -71,7 +102,11 @@ func (k *KV) Create(ctx context.Context, id string, value []byte) (uint64, error
 	if err != nil {
 		return 0, err
 	}
-	rev, err := k.kv.Create(ctx, key, value)
+	stored, err := k.wrap(value, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode %s for %s: %w", id, k.bucket, err)
+	}
+	rev, err := k.kv.Create(ctx, key, stored)
 	if err != nil {
 		return 0, k.writeError("create", id, err)
 	}
@@ -84,7 +119,11 @@ func (k *KV) Update(ctx context.Context, id string, value []byte, expected uint6
 	if err != nil {
 		return 0, err
 	}
-	rev, err := k.kv.Update(ctx, key, value, expected)
+	stored, err := k.wrap(value, expected)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode %s for %s: %w", id, k.bucket, err)
+	}
+	rev, err := k.kv.Update(ctx, key, stored, expected)
 	if err != nil {
 		return 0, k.writeError("update", id, err)
 	}
@@ -138,5 +177,6 @@ func (k *KV) writeError(op, id string, err error) error {
 }
 
 func entryOf(id string, entry jetstream.KeyValueEntry) Entry {
-	return Entry{ID: id, Value: entry.Value(), Revision: entry.Revision(), Modified: entry.Created()}
+	value, origin, base := decodeEnvelope(entry.Value())
+	return Entry{ID: id, Value: value, Revision: entry.Revision(), Modified: entry.Created(), Origin: origin, Base: base}
 }
