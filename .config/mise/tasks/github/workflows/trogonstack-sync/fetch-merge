@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Fetch the bundled merge and check it is the commit the merge job recorded"
+set -euo pipefail
+# The sha was recorded before any upstream code ran, so a test that replaced
+# the bundle is caught here.
+git fetch --no-tags "$RUNNER_TEMP/sync.bundle" HEAD
+if [ "$(git rev-parse FETCH_HEAD)" != "$MERGE_SHA" ]; then
+  echo "The bundle holds $(git rev-parse FETCH_HEAD), not $MERGE_SHA" >&2
+  exit 1
+fi

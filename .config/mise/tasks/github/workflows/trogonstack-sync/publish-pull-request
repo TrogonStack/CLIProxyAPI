@@ -1,22 +1,44 @@
 #!/usr/bin/env bash
-#MISE description="Publish a merge that fails verification as a pull request and fail"
+#MISE description="Publish a merge that cannot land on main as a draft pull request and fail"
 set -euo pipefail
+source "$MISE_PROJECT_ROOT/.config/mise/lib/git.sh"
+
 branch="sync/$TAG"
-git fetch origin "$branch" || true
-git push --force-with-lease origin "HEAD:refs/heads/$branch"
-title="chore(sync): merge upstream $TAG"
-{
-  echo "Merging upstream $TAG into main is clean but build or tests failed."
-  echo
-  echo "Failed run: $RUN_URL"
-  echo
-  echo "Fix on this branch, then merge it into main."
-} > "$RUNNER_TEMP/pr-body.txt"
-existing="$(gh pr list --state open --head "$branch" --json number --jq 'length')"
-if [ "$existing" = "0" ]; then
-  gh pr create --base main --head "$branch" --title "$title" \
-    --body-file "$RUNNER_TEMP/pr-body.txt"
-else
-  echo "Open sync PR already exists"
+# An open pull request may already carry fixes, so leave its branch alone.
+existing="$(GH_TOKEN="$BARNACLE_TOKEN" gh pr list --state open --head "$branch" --json url --jq '.[0].url // ""')"
+if [ -n "$existing" ]; then
+  echo "Upstream $TAG is still pending on $existing" >> "$GITHUB_STEP_SUMMARY"
+  exit 1
 fi
+
+if [ "$CONFLICT" = "true" ]; then
+  reason="it conflicts with main."
+elif [ "$VERIFIED" = "failure" ]; then
+  reason="build or tests failed."
+else
+  reason="$PUSH_REASON"
+fi
+
+# Pushed as Barnacle so the pull request runs CI and may change workflows.
+# Without an open pull request the branch is stale, so it is replaced.
+git_push_as "$BARNACLE_TOKEN" --force origin "$MERGE_SHA:refs/heads/$branch"
+
+{
+  echo "Merging upstream $TAG into main needs a fix before it can land: $reason"
+  # Only a conflicting merge skips the build and tests, so only then is the
+  # list known to be written before any upstream code ran.
+  if [ "$CONFLICT" = "true" ] && [ -s "$RUNNER_TEMP/conflicts.txt" ]; then
+    echo
+    echo "Conflicting files, committed with their markers:"
+    # shellcheck disable=SC2016 # literal backticks for markdown
+    head -n 200 "$RUNNER_TEMP/conflicts.txt" | sed 's/^/- `/; s/$/`/'
+  fi
+  echo
+  echo "Run: $RUN_URL"
+  echo
+  echo "Fix on this branch, mark it ready, then merge it into main."
+} > "$RUNNER_TEMP/pr-body.txt"
+url="$(GH_TOKEN="$BARNACLE_TOKEN" gh pr create --draft --base main --head "$branch" \
+  --title "chore(sync): merge upstream $TAG" --body-file "$RUNNER_TEMP/pr-body.txt")"
+echo "Upstream $TAG is pending on $url" >> "$GITHUB_STEP_SUMMARY"
 exit 1
