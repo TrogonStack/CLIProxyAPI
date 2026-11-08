@@ -52,6 +52,14 @@ func WithRefreshJournal(ctx context.Context, journal RefreshJournal) context.Con
 	return context.WithValue(ctx, refreshJournalContextKey{}, journal)
 }
 
+// RefreshJournalFromContext returns the journal a caller bound with
+// WithRefreshJournal. Providers without a journal of their own refresh with no
+// claim unless one is bound, so a store opts them in rather than changing them.
+func RefreshJournalFromContext(ctx context.Context) (RefreshJournal, bool) {
+	journal, ok := ctx.Value(refreshJournalContextKey{}).(RefreshJournal)
+	return journal, ok && journal != nil
+}
+
 // SetRefreshJournal configures the journal for callers outside the auth manager.
 func (o *CodexAuth) SetRefreshJournal(journal RefreshJournal) { o.refreshJournal = journal }
 
@@ -143,6 +151,29 @@ func journalRefresh[T any](ctx context.Context, journal RefreshJournal, clientID
 	return value, errRun
 }
 
+// JournalRefresh runs one refresh of grant under the journal for any provider.
+// The claim is recorded before run sends anything and the receipt is saved after
+// it, so a response lost in between leaves a pending claim that no replica
+// replays; late callers are served from the receipt chain. clientID keeps the
+// grant digests of different providers apart. Its receipts need the same shape
+// codex writes: value.expired as RFC 3339 and value.refresh_token for rotation,
+// which decode turns back into T.
+func JournalRefresh[T any](ctx context.Context, journal RefreshJournal, clientID, grant string, run func() (T, error), decode func(ojson.Result) (T, error)) (T, error) {
+	return journalRefresh(ctx, journal, clientID, grant, run, decode)
+}
+
+// QualifyRefreshOutcome keeps a failure as a rejection only when the provider
+// answered with a response known to leave the grant unconsumed, using the same
+// rules as codex. Anything else, a transport error, an unreadable body or a
+// bare 429 or 5xx, may have consumed the grant and becomes an unknown outcome
+// at stage, which the journal records instead of letting the grant be replayed.
+func QualifyRefreshOutcome(stage string, err error) error {
+	if err == nil || IsRefreshOutcomeUnknown(err) || isNonRetryableRefreshErr(err) {
+		return err
+	}
+	return &RefreshOutcomeUnknownError{Stage: stage, Cause: err}
+}
+
 func usableRefreshReceipt[T any](value T, expires string) (T, error) {
 	expiry, errParse := time.Parse(time.RFC3339, expires)
 	if errParse != nil || !expiry.After(time.Now()) {
@@ -204,6 +235,11 @@ type memoryRefreshJournal struct {
 }
 
 var processRefreshJournal memoryRefreshJournal
+
+// NewMemoryRefreshJournal returns a journal that lives only in this process, for
+// direct SDK callers and tests; it protects against replay within the process
+// and never across replicas.
+func NewMemoryRefreshJournal() RefreshJournal { return &memoryRefreshJournal{} }
 
 func (j *memoryRefreshJournal) RefreshClaim(_ context.Context, key string) (bool, error) {
 	j.mu.Lock()

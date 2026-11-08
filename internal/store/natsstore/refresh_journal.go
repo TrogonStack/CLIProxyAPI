@@ -96,3 +96,25 @@ func (j *RefreshJournal) RefreshComplete(ctx context.Context, key string, receip
 	}
 	return nil
 }
+
+// The store is the refresh journal of the credentials it holds, so the codex
+// refresh and the conductor find it without knowing about NATS.
+
+// RefreshClaim records the grant as consumed, see RefreshJournal.
+func (s *Store) RefreshClaim(ctx context.Context, key string) (bool, error) {
+	return s.journal.RefreshClaim(ctx, key)
+}
+
+// RefreshRead returns the receipt of a claimed grant, see RefreshJournal.
+func (s *Store) RefreshRead(ctx context.Context, key string) ([]byte, error) {
+	return s.journal.RefreshRead(ctx, key)
+}
+
+// RefreshComplete saves the receipt of a claimed grant, see RefreshJournal.
+func (s *Store) RefreshComplete(ctx context.Context, key string, receipt []byte) error {
+	return s.journal.RefreshComplete(ctx, key, receipt)
+}
+
+// SharesRefreshJournal reports that every replica of the bucket claims in one
+// journal, so the conductor guards every single-use provider with it.
+func (s *Store) SharesRefreshJournal() bool { return true }

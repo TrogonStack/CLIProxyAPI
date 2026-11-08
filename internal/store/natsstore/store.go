@@ -29,6 +29,7 @@ type Store struct {
 	replicaID  string
 	auth       *AuthStore
 	config     *ConfigStore
+	journal    *RefreshJournal
 	spoolRoot  string
 	configPath string
 
@@ -73,6 +74,7 @@ func NewStore(nc *nats.Conn, boot *Bootstrapped, settings StoreSettings, spoolDi
 		replicaID:  replicaID,
 		auth:       auth,
 		config:     cfg,
+		journal:    NewRefreshJournal(NewKV(settings.BucketName(BucketRefresh), boot.Bucket(settings, BucketRefresh), origin)),
 		spoolRoot:  root,
 		configPath: filepath.Join(configDir, "config.yaml"),
 	}, nil

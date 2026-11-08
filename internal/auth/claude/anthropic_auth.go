@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/singleflight"
@@ -510,7 +512,16 @@ func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*C
 		refreshCtx, cancelRefresh := context.WithTimeout(context.WithoutCancel(ctx), claudeRefreshTimeout)
 		defer cancelRefresh()
 		refreshCtx = context.WithValue(refreshCtx, claudeRefreshHandshakeTimeoutContextKey{}, claudeRefreshHandshakeTimeout)
-		return o.refreshTokensSingleFlight(refreshCtx, refreshToken)
+		// Without a journal bound by the store, refresh as before. With one,
+		// the grant is claimed first and never replayed after a lost response.
+		journal, journaled := codex.RefreshJournalFromContext(ctx)
+		if !journaled {
+			return o.refreshTokensSingleFlight(refreshCtx, refreshToken)
+		}
+		return codex.JournalRefresh(refreshCtx, journal, ClientID, refreshToken, func() (*ClaudeTokenData, error) {
+			tokenData, errRefresh := o.refreshTokensSingleFlight(refreshCtx, refreshToken)
+			return tokenData, codex.QualifyRefreshOutcome("response", errRefresh)
+		}, decodeRefreshReceipt)
 	})
 	if err != nil {
 		return nil, err
@@ -520,6 +531,23 @@ func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*C
 		return nil, fmt.Errorf("token refresh failed: invalid single-flight result")
 	}
 	return tokenData, nil
+}
+
+// decodeRefreshReceipt rebuilds the tokens a successful refresh saved, for
+// replicas that lost the claim.
+func decodeRefreshReceipt(value ojson.Result) (*ClaudeTokenData, error) {
+	if !value.IsObject() || value.Get("access_token").String() == "" || value.Get("expired").String() == "" {
+		return nil, fmt.Errorf("invalid refresh receipt")
+	}
+	return &ClaudeTokenData{
+		AccessToken:      value.Get("access_token").String(),
+		RefreshToken:     value.Get("refresh_token").String(),
+		Email:            value.Get("email").String(),
+		AccountUUID:      value.Get("account_uuid").String(),
+		OrganizationUUID: value.Get("organization_uuid").String(),
+		OrganizationName: value.Get("organization_name").String(),
+		Expire:           value.Get("expired").String(),
+	}, nil
 }
 
 func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken string) (*ClaudeTokenData, error) {

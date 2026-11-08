@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
@@ -586,7 +588,24 @@ func (c *DeviceFlowClient) RefreshToken(ctx context.Context, refreshToken string
 	flightKey := c.tokenURL() + ":" + refreshToken
 
 	result, err, _ := kimiRefreshGroup.Do(flightKey, func() (interface{}, error) {
-		return c.refreshTokenSingleFlight(context.WithoutCancel(ctx), refreshToken)
+		refreshCtx := context.WithoutCancel(ctx)
+		// Without a journal bound by the store, refresh as before. With one,
+		// the grant is claimed first and never replayed after a lost response.
+		journal, journaled := codex.RefreshJournalFromContext(ctx)
+		if !journaled {
+			return c.refreshTokenSingleFlight(refreshCtx, refreshToken)
+		}
+		receipt, errRefresh := codex.JournalRefresh(refreshCtx, journal, kimiClientID, refreshToken, func() (*kimiRefreshReceipt, error) {
+			tokenData, errSend := c.refreshTokenSingleFlight(refreshCtx, refreshToken)
+			if errSend = codex.QualifyRefreshOutcome("response", errSend); errSend != nil {
+				return nil, errSend
+			}
+			return newKimiRefreshReceipt(tokenData), nil
+		}, decodeKimiRefreshReceipt)
+		if errRefresh != nil {
+			return nil, errRefresh
+		}
+		return &receipt.KimiTokenData, nil
 	})
 	if err != nil {
 		return nil, err
@@ -596,6 +615,40 @@ func (c *DeviceFlowClient) RefreshToken(ctx context.Context, refreshToken string
 		return nil, fmt.Errorf("kimi: refresh token failed: invalid single-flight result")
 	}
 	return tokenData, nil
+}
+
+// kimiRefreshReceipt is what a successful refresh saves. Kimi reports expiry as
+// a Unix time, and the journal reads value.expired as RFC 3339, so the receipt
+// carries both.
+type kimiRefreshReceipt struct {
+	KimiTokenData
+	Expired string `json:"expired"`
+}
+
+func newKimiRefreshReceipt(tokenData *KimiTokenData) *kimiRefreshReceipt {
+	receipt := &kimiRefreshReceipt{KimiTokenData: *tokenData}
+	if tokenData.ExpiresAt > 0 {
+		receipt.Expired = time.Unix(tokenData.ExpiresAt, 0).UTC().Format(time.RFC3339)
+	}
+	return receipt
+}
+
+// decodeKimiRefreshReceipt rebuilds the tokens a successful refresh saved, for
+// replicas that lost the claim.
+func decodeKimiRefreshReceipt(value ojson.Result) (*kimiRefreshReceipt, error) {
+	if !value.IsObject() || value.Get("access_token").String() == "" || value.Get("expired").String() == "" {
+		return nil, fmt.Errorf("invalid refresh receipt")
+	}
+	return &kimiRefreshReceipt{
+		KimiTokenData: KimiTokenData{
+			AccessToken:  value.Get("access_token").String(),
+			RefreshToken: value.Get("refresh_token").String(),
+			TokenType:    value.Get("token_type").String(),
+			ExpiresAt:    value.Get("expires_at").Int(),
+			Scope:        value.Get("scope").String(),
+		},
+		Expired: value.Get("expired").String(),
+	}, nil
 }
 
 func (c *DeviceFlowClient) refreshTokenSingleFlight(ctx context.Context, refreshToken string) (*KimiTokenData, error) {

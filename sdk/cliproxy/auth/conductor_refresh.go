@@ -1270,18 +1270,12 @@ func (m *Manager) refreshAuthForRequestAtEpoch(ctx context.Context, id, failedAc
 	if auth == nil || exec == nil {
 		return nil, errors.New("auth or executor not found")
 	}
-	if strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
-		if resolver, okResolver := store.(interface {
-			RefreshJournalFor(*Auth) (codex.RefreshJournal, error)
-		}); okResolver {
-			journal, errJournal := resolver.RefreshJournalFor(auth)
-			if errJournal != nil {
-				return nil, fmt.Errorf("resolve credential refresh journal: %w", errJournal)
-			}
-			ctx = codex.WithRefreshJournal(ctx, journal)
-		} else if journal, okJournal := store.(codex.RefreshJournal); okJournal {
-			ctx = codex.WithRefreshJournal(ctx, journal)
-		}
+	journal, errJournal := refreshJournalFor(store, auth, exec)
+	if errJournal != nil {
+		return nil, fmt.Errorf("resolve credential refresh journal: %w", errJournal)
+	}
+	if journal != nil {
+		ctx = codex.WithRefreshJournal(ctx, journal)
 	}
 	if registrationEpoch != 0 && auth.RegistrationEpoch != registrationEpoch {
 		return nil, errors.New("auth registration changed before refresh")

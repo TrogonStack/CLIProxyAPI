@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MoeForge/moego/base64"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -336,4 +337,54 @@ func fakeJWTWithEmail(email, subject string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"` + email + `","sub":"` + subject + `"}`))
 	return header + "." + payload + ".sig"
+}
+
+func TestRefreshTokensJournalSendsOnceAndNeverReplaysALostResponse(t *testing.T) {
+	resetXAIRefreshGroupForTest()
+	t.Cleanup(resetXAIRefreshGroupForTest)
+
+	var requests atomic.Int32
+	lose := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if lose.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "new-access",
+			"refresh_token": "new-refresh",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	journal := codex.NewMemoryRefreshJournal()
+	ctx := codex.WithRefreshJournal(context.Background(), journal)
+	auth := NewXAIAuth(nil)
+	first, err := auth.RefreshTokens(ctx, "old-refresh", server.URL)
+	if err != nil || first.AccessToken != "new-access" || first.RefreshToken != "new-refresh" {
+		t.Fatalf("first refresh = %+v, %v", first, err)
+	}
+	late, err := auth.RefreshTokens(ctx, "old-refresh", server.URL)
+	if err != nil || late.AccessToken != "new-access" || late.Expire != first.Expire {
+		t.Fatalf("late refresh = %+v, %v", late, err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
+	}
+
+	// A grant whose answer was lost is never sent again.
+	lose.Store(true)
+	before := requests.Load()
+	for range 2 {
+		if _, err := auth.RefreshTokens(ctx, "lost-refresh", server.URL); !codex.IsRefreshOutcomeUnknown(err) {
+			t.Fatalf("lost grant = %v, want refresh_outcome_unknown", err)
+		}
+	}
+	if got := requests.Load() - before; got != 1 {
+		t.Fatalf("requests for the lost grant = %d, want 1", got)
+	}
 }
