@@ -14,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/store"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/store/natsstore"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
@@ -65,16 +66,29 @@ var storeBackends = []storeBackend{
 	{name: "postgres", detect: detectPostgresBackend},
 	{name: "object", detect: detectObjectBackend},
 	{name: "git", detect: detectGitBackend},
+	{name: "nats", detect: detectNatsBackend},
 }
 
-// selectBackend returns the opener of the first backend selected by the environment, or nil.
+// selectBackend returns the opener of the first backend selected by the
+// environment, or nil. Later backends that are also configured are ignored
+// with a warning, since a stray variable is easy to leave behind.
 func selectBackend(env backendEnv) openBackendFunc {
+	var (
+		selected openBackendFunc
+		chosen   string
+	)
 	for _, backend := range storeBackends {
-		if open := backend.detect(env); open != nil {
-			return open
+		open := backend.detect(env)
+		if open == nil {
+			continue
 		}
+		if selected == nil {
+			selected, chosen = open, backend.name
+			continue
+		}
+		log.Warnf("%s store settings are present but ignored because the %s store is selected", backend.name, chosen)
 	}
-	return nil
+	return selected
 }
 
 func detectPostgresBackend(env backendEnv) openBackendFunc {
@@ -218,6 +232,50 @@ func detectGitBackend(env backendEnv) openBackendFunc {
 			authDir:    inst.AuthDir(),
 			ready: func() {
 				log.Infof("git-backed token store enabled, repository path: %s", root)
+			},
+		}, nil
+	}
+}
+
+func detectNatsBackend(env backendEnv) openBackendFunc {
+	if _, ok := env.lookup(natsstore.EnvURL); !ok {
+		return nil
+	}
+	lookup := func(key string) (string, bool) { return env.lookup(key) }
+	localPath, _ := env.lookup("NATS_STORE_LOCAL_PATH", "nats_store_local_path")
+	spool := filepath.Join(env.spoolBase(localPath), "natsstore")
+	return func() (*openedBackend, error) {
+		settings, err := natsstore.StoreSettingsFromEnv(lookup)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read nats store settings: %w", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		nc, err := natsstore.Connect(ctx, natsstore.SettingsFromEnv(lookup).Resolve(), lookup, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect nats token store: %w", err)
+		}
+		boot, err := natsstore.Bootstrap(ctx, nc, settings)
+		if err != nil {
+			nc.Close()
+			return nil, fmt.Errorf("failed to bootstrap nats store buckets: %w", err)
+		}
+		inst, err := natsstore.NewStore(nc, boot, settings, spool)
+		if err != nil {
+			nc.Close()
+			return nil, fmt.Errorf("failed to initialize nats token store: %w", err)
+		}
+		examplePath := filepath.Join(env.workDir, "config.example.yaml")
+		if errBootstrap := inst.Bootstrap(ctx, examplePath); errBootstrap != nil {
+			_ = inst.Close()
+			return nil, fmt.Errorf("failed to bootstrap nats-backed config: %w", errBootstrap)
+		}
+		return &openedBackend{
+			tokenStore: inst,
+			configPath: inst.ConfigPath(),
+			authDir:    inst.AuthDir(),
+			ready: func() {
+				log.Infof("nats-backed token store enabled, bucket prefix: %s, workspace path: %s", settings.Prefix, inst.WorkDir())
 			},
 		}, nil
 	}
