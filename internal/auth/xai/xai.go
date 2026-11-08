@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/MoeForge/moego/base64"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	log "github.com/sirupsen/logrus"
@@ -358,7 +360,17 @@ func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint
 	tokenEndpoint = strings.TrimSpace(tokenEndpoint)
 
 	result, err, _ := xaiRefreshGroup.Do(refreshToken, func() (interface{}, error) {
-		return a.refreshTokensSingleFlight(context.WithoutCancel(ctx), refreshToken, tokenEndpoint)
+		refreshCtx := context.WithoutCancel(ctx)
+		// Without a journal bound by the store, refresh as before. With one,
+		// the grant is claimed first and never replayed after a lost response.
+		journal, journaled := codex.RefreshJournalFromContext(ctx)
+		if !journaled {
+			return a.refreshTokensSingleFlight(refreshCtx, refreshToken, tokenEndpoint)
+		}
+		return codex.JournalRefresh(refreshCtx, journal, ClientID, refreshToken, func() (*TokenData, error) {
+			tokenData, errRefresh := a.refreshTokensSingleFlight(refreshCtx, refreshToken, tokenEndpoint)
+			return tokenData, codex.QualifyRefreshOutcome("response", errRefresh)
+		}, decodeRefreshReceipt)
 	})
 	if err != nil {
 		return nil, err
@@ -368,6 +380,24 @@ func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint
 		return nil, fmt.Errorf("xai token refresh failed: invalid single-flight result")
 	}
 	return tokenData, nil
+}
+
+// decodeRefreshReceipt rebuilds the tokens a successful refresh saved, for
+// replicas that lost the claim.
+func decodeRefreshReceipt(value ojson.Result) (*TokenData, error) {
+	if !value.IsObject() || value.Get("access_token").String() == "" || value.Get("expired").String() == "" {
+		return nil, fmt.Errorf("invalid refresh receipt")
+	}
+	return &TokenData{
+		AccessToken:  value.Get("access_token").String(),
+		RefreshToken: value.Get("refresh_token").String(),
+		IDToken:      value.Get("id_token").String(),
+		TokenType:    value.Get("token_type").String(),
+		ExpiresIn:    int(value.Get("expires_in").Int()),
+		Expire:       value.Get("expired").String(),
+		Email:        value.Get("email").String(),
+		Subject:      value.Get("sub").String(),
+	}, nil
 }
 
 func (a *XAIAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken, tokenEndpoint string) (*TokenData, error) {
