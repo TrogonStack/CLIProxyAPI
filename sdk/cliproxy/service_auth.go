@@ -223,7 +223,7 @@ func (s *Service) handleAuthUpdates(ctx context.Context, updates []watcher.AuthU
 						if path == "" {
 							path = existing.Attributes[coreauth.AttributeSource]
 						}
-					case coreauth.AuthSourceGit, coreauth.AuthSourcePostgres, coreauth.AuthSourceObjectStore:
+					case coreauth.AuthSourceGit, coreauth.AuthSourcePostgres, coreauth.AuthSourceObjectStore, coreauth.AuthSourceNATS:
 						// Remote stores are file-backed only when they provide a local path.
 					default:
 						path = ""

@@ -10,6 +10,7 @@ const (
 	AuthSourceFile        = "file"
 	AuthSourceGit         = "git"
 	AuthSourceMemory      = "memory"
+	AuthSourceNATS        = "nats"
 	AuthSourceObjectStore = "objectstore"
 	AuthSourcePostgres    = "postgres"
 
@@ -101,6 +102,8 @@ func normalizeAuthSourceKind(source string) string {
 		return AuthSourceGit
 	case AuthSourceMemory, "runtime", "runtime_only":
 		return AuthSourceMemory
+	case AuthSourceNATS:
+		return AuthSourceNATS
 	case AuthSourceObjectStore, "object-store":
 		return AuthSourceObjectStore
 	case AuthSourcePostgres, "postgresql", "database", "db":
