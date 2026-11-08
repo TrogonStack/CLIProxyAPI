@@ -66,6 +66,7 @@ func (m *Manager) StartAutoRefresh(parent context.Context, interval time.Duratio
 	m.refreshCancel = cancelCtx
 	m.refreshLoop = loop
 	m.mu.Unlock()
+	m.startRefreshQueue(ctx)
 
 	loop.rebuild(time.Now())
 	go loop.run(ctx)
@@ -78,6 +79,7 @@ func (m *Manager) StopAutoRefresh() {
 	cancel := m.refreshCancel
 	m.refreshCancel = nil
 	m.refreshLoop = nil
+	m.refreshDispatcher = nil
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()

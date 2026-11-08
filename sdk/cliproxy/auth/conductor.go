@@ -231,6 +231,9 @@ type Manager struct {
 	// Auto refresh state
 	refreshCancel context.CancelFunc
 	refreshLoop   *authAutoRefreshLoop
+	// refreshDispatcher, when set, takes the refreshes the scheduler finds due
+	// in place of refreshing inline, under m.mu.
+	refreshDispatcher RefreshDispatcher
 	// refreshJobs retains queued and running jobs across loop restarts under m.mu.
 	refreshJobs map[string]*authRefreshJob
 
