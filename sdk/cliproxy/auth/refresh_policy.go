@@ -17,6 +17,10 @@ const (
 	RefreshSingleUse RefreshPolicy = iota
 	// RefreshNone is for grants that stay valid after use, so sending one twice is harmless.
 	RefreshNone
+	// RefreshLease is for grants that stay valid after use but where a refresh is
+	// worth doing once: the replica that refreshes holds a short lease, and
+	// replicas that find it held leave the refresh to the holder.
+	RefreshLease
 )
 
 // RefreshPolicyProvider is implemented by executors whose grants are not single-use.
@@ -43,7 +47,7 @@ type SharedRefreshJournal interface {
 
 // refreshJournalFor picks the journal bound to a refresh of auth, nil for none.
 func refreshJournalFor(store Store, auth *Auth, exec ProviderExecutor) (codex.RefreshJournal, error) {
-	if RefreshPolicyOf(exec) == RefreshNone {
+	if RefreshPolicyOf(exec) != RefreshSingleUse {
 		return nil, nil
 	}
 	if shared, ok := store.(SharedRefreshJournal); ok && shared.SharesRefreshJournal() {

@@ -1282,6 +1282,13 @@ func (m *Manager) refreshAuthForRequestAtEpoch(ctx context.Context, id, failedAc
 	if registrationEpoch != 0 && auth.RegistrationEpoch != registrationEpoch {
 		return nil, errors.New("auth registration changed before refresh")
 	}
+	// A request that needs a usable token now refreshes even when another
+	// replica holds the lease; the grant is reusable, so it only costs a call.
+	release, leaseHeld := acquireRefreshLease(ctx, store, auth, exec, forceRefresh || failedAccessToken != "")
+	if leaseHeld {
+		return auth.Clone(), nil
+	}
+	defer release()
 	if hasDisabledInvalidGrantFailure(auth) && !forceRefresh {
 		return nil, errors.New("auth is disabled with invalid grant")
 	}
