@@ -11,11 +11,7 @@ on:
     - cron: '17 6 * * 5'
   workflow_dispatch:
 
-permissions:
-  contents: write
-  actions: write
-  packages: read
-  id-token: write
+permissions: {}
 
 concurrency:
   group: trogonstack-sync
@@ -28,42 +24,26 @@ env:
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
-  sync:
+  # Builds and tests upstream code, so it can read the repository and nothing
+  # else. The merge is bundled before any of that code runs, and publish
+  # pushes it by sha, so a test cannot swap the commit that lands.
+  merge:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # The environment is what lets this job read the Barnacle key, and only
-    # from main. Barnacle opens the sync pull requests, so they run CI and may
-    # change workflows, which GITHUB_TOKEN can do neither of.
-    environment: github-app-barnacle
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      up_to_date: ${{ steps.tag.outputs.up_to_date }}
+      sha: ${{ steps.merge.outputs.sha }}
+      conflict: ${{ steps.merge.outputs.conflict }}
+      verified: ${{ steps.verify.outcome }}
     steps:
-      - name: Google Cloud auth
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        with:
-          project_id: shp-terraform
-          workload_identity_provider: projects/630372936919/locations/global/workloadIdentityPools/github-app-barnacle/providers/trogonstack
-
-      - name: Barnacle key
-        id: barnacle_key
-        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
-        with:
-          secrets: |-
-            private_key:shp-terraform/github-app-barnacle-trogonstack-private-key
-
-      - name: Barnacle token
-        id: barnacle
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.BARNACLE_APP_CLIENT_ID }}
-          private-key: ${{ steps.barnacle_key.outputs.private_key }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mise
 
@@ -76,11 +56,21 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: mise run github:workflows:trogonstack-sync:merge-upstream
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.tag.outputs.up_to_date == 'false'
+        with:
+          name: sync
+          path: |
+            ${{ runner.temp }}/sync.bundle
+            ${{ runner.temp }}/conflicts.txt
+          retention-days: 7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'false'
         with:
           go-version-file: go.mod
-          cache: true
+          # A cache saved after upstream tests run would be restored by
+          # later builds on main.
+          cache: false
 
       # The full suite is run as is. If upstream later adds tests that need
       # credentials or network not available in CI, narrow this to a package
@@ -90,31 +80,167 @@ jobs:
         if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'false'
         continue-on-error: true
         run: mise run github:workflows:trogonstack-sync:verify
-      - name: Publish conflicting merge as a pull request
-        if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'true'
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          REASON: it conflicts with main.
-          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
-        run: mise run github:workflows:trogonstack-sync:publish-pull-request
-      - name: Publish failing merge as a pull request
-        if: steps.tag.outputs.up_to_date == 'false' && steps.verify.outcome == 'failure'
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          REASON: build or tests failed.
-          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
-        run: mise run github:workflows:trogonstack-sync:publish-pull-request
+
+  # The only job that can read the Barnacle key: the environment admits it
+  # from main, and GCP admits only this file. Main is upstream code after every
+  # clean merge, so this job runs nothing from the checkout, no mise and no
+  # local actions, only the steps below. This file is the one place upstream
+  # cannot change unreviewed: GITHUB_TOKEN may not push workflow changes, so
+  # those land through a pull request.
+  # Barnacle opens the sync pull requests, so they run CI and may change
+  # workflows, which GITHUB_TOKEN can do neither of.
+  publish:
+    needs: merge
+    if: needs.merge.outputs.up_to_date == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: github-app-barnacle
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
+    env:
+      TAG: ${{ needs.merge.outputs.tag }}
+      MERGE_SHA: ${{ needs.merge.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sync
+          path: ${{ runner.temp }}
+
+      # The bundle is checked against the sha the merge job recorded before
+      # any upstream code ran, so a test that replaced it is caught here.
+      - name: Fetch the merge
+        run: |
+          git fetch --no-tags "$RUNNER_TEMP/sync.bundle" HEAD
+          if [ "$(git rev-parse FETCH_HEAD)" != "$MERGE_SHA" ]; then
+            echo "The bundle holds $(git rev-parse FETCH_HEAD), not $MERGE_SHA" >&2
+            exit 1
+          fi
+
+      # Pushed with GITHUB_TOKEN so the push itself starts no image build; the
+      # dispatch starts the one that releases. GITHUB_TOKEN cannot push commits
+      # that touch .github/workflows, and upstream changes those every month or
+      # so, so a rejected push goes to a pull request instead.
       - name: Push main and build image
-        if: steps.tag.outputs.up_to_date == 'false' && steps.verify.outcome == 'success'
+        id: push
+        if: needs.merge.outputs.verified == 'success'
+        run: |
+          if git push origin "$MERGE_SHA:refs/heads/main"; then
+            gh workflow run trogonstack-image.yml --ref main -f release=true
+            echo "Merged upstream $TAG into main and dispatched the image build with release" >> "$GITHUB_STEP_SUMMARY"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+          elif git log --format= --name-only "origin/main..$MERGE_SHA" -- .github/workflows | grep -q .; then
+            echo "reason=the merge changes .github/workflows, which GITHUB_TOKEN may not push." >> "$GITHUB_OUTPUT"
+          else
+            echo "reason=the push to main was rejected." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Google Cloud auth
+        if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.BARNACLE_WORKLOAD_IDENTITY_PROVIDER }}
+
+      - name: Barnacle key
+        id: barnacle_key
+        if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |-
+            private_key:${{ vars.BARNACLE_PRIVATE_KEY_SECRET }}
+
+      - name: Barnacle token
+        id: barnacle
+        if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BARNACLE_APP_CLIENT_ID }}
+          private-key: ${{ steps.barnacle_key.outputs.private_key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      # Pushed as Barnacle so the pull request runs CI and may change
+      # workflows. An open pull request may already carry fixes, so its branch
+      # is left alone; without one the branch is stale and is replaced.
+      # actions/checkout sends GITHUB_TOKEN as an extra header, which would win
+      # over the credential helper, so that header is reset for this push.
+      - name: Publish the merge as a pull request
+        if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
-        run: mise run github:workflows:trogonstack-sync:push-main
-      # Main may hold fork-only commits that were never released. The release
-      # workflow is idempotent, so run it for HEAD when it has an image, and
-      # build and release that commit when it has none.
+          GH_TOKEN: ${{ steps.barnacle.outputs.token }}
+          CONFLICT: ${{ needs.merge.outputs.conflict }}
+          VERIFIED: ${{ needs.merge.outputs.verified }}
+          PUSH_REASON: ${{ steps.push.outputs.reason }}
+        run: |
+          branch="sync/$TAG"
+          existing="$(gh pr list --state open --head "$branch" --json url --jq '.[0].url // ""')"
+          if [ -n "$existing" ]; then
+            echo "Upstream $TAG is still pending on $existing" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if [ "$CONFLICT" = "true" ]; then
+            reason="it conflicts with main."
+          elif [ "$VERIFIED" = "failure" ]; then
+            reason="build or tests failed."
+          else
+            reason="$PUSH_REASON"
+          fi
+
+          # shellcheck disable=SC2016 # expanded by the credential helper
+          git -c http.https://github.com/.extraheader= -c credential.helper= \
+            -c 'credential.helper=!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
+            push --force origin "$MERGE_SHA:refs/heads/$branch"
+
+          {
+            echo "Merging upstream $TAG into main needs a fix before it can land: $reason"
+            # Only a conflicting merge skips the build and tests, so only then
+            # is the list known to be written before any upstream code ran.
+            if [ "$CONFLICT" = "true" ] && [ -s "$RUNNER_TEMP/conflicts.txt" ]; then
+              echo
+              echo "Conflicting files, committed with their markers:"
+              # shellcheck disable=SC2016 # literal backticks for markdown
+              head -n 200 "$RUNNER_TEMP/conflicts.txt" | sed 's/^/- `/; s/$/`/'
+            fi
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Fix on this branch, mark it ready, then merge it into main."
+          } > "$RUNNER_TEMP/pr-body.txt"
+          url="$(gh pr create --draft --base main --head "$branch" \
+            --title "chore(sync): merge upstream $TAG" --body-file "$RUNNER_TEMP/pr-body.txt")"
+          echo "Upstream $TAG is pending on $url" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+  # Main may hold fork-only commits that were never released. The release
+  # workflow is idempotent, so run it for HEAD when it has an image, and build
+  # and release that commit when it has none.
+  release:
+    needs: merge
+    if: needs.merge.outputs.up_to_date == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mise
+
       - name: Release current main
-        if: steps.tag.outputs.up_to_date == 'true'
         env:
           REGISTRY_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
