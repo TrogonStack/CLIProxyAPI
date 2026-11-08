@@ -270,6 +270,8 @@ func detectNatsBackend(env backendEnv) openBackendFunc {
 			_ = inst.Close()
 			return nil, fmt.Errorf("failed to bootstrap nats-backed config: %w", errBootstrap)
 		}
+		// The watch outlives this function's startup deadline.
+		inst.StartSync(context.Background())
 		return &openedBackend{
 			tokenStore: inst,
 			configPath: inst.ConfigPath(),

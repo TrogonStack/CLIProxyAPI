@@ -31,6 +31,9 @@ type AuthStore struct {
 	// revisions is the revision last read or written per credential, the
 	// expectation a later save is checked against.
 	revisions map[string]uint64
+	// floor is the highest revision seen per credential from any source,
+	// including deletes. A watched change at or below it is stale or an echo.
+	floor map[string]uint64
 }
 
 // NewAuthStore creates a store over the auth bucket that renders files under authDir.
@@ -42,7 +45,7 @@ func NewAuthStore(kv *KV, authDir string) (*AuthStore, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("nats store: create auth directory: %w", err)
 	}
-	return &AuthStore{kv: kv, authDir: abs, revisions: make(map[string]uint64)}, nil
+	return &AuthStore{kv: kv, authDir: abs, revisions: make(map[string]uint64), floor: make(map[string]uint64)}, nil
 }
 
 // AuthDir returns the directory credential files are rendered into.
@@ -59,6 +62,7 @@ func (s *AuthStore) Snapshot(ctx context.Context) ([]Entry, error) {
 	s.revisions = make(map[string]uint64, len(entries))
 	for _, entry := range entries {
 		s.revisions[entry.ID] = entry.Revision
+		s.noteRevision(entry.ID, entry.Revision)
 	}
 	return entries, nil
 }
@@ -170,6 +174,7 @@ func (s *AuthStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, 
 		}
 		if err == nil {
 			s.revisions[id] = rev
+			s.noteRevision(id, rev)
 			s.finishSave(auth, path)
 			return path, nil
 		}
@@ -189,6 +194,7 @@ func (s *AuthStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, 
 			return "", err
 		default:
 			s.revisions[id] = current.Revision
+			s.noteRevision(id, current.Revision)
 			if err := s.adoptRemote(path, current.Value, auth); err != nil {
 				return "", err
 			}
@@ -420,11 +426,13 @@ func (s *AuthStore) PutFile(ctx context.Context, id string, data []byte) error {
 			return err
 		}
 		s.revisions[id] = rev
+		s.noteRevision(id, rev)
 		return nil
 	case err != nil:
 		return err
 	case sameJSON(current.Value, data):
 		s.revisions[id] = current.Revision
+		s.noteRevision(id, current.Revision)
 		return nil
 	case current.Revision != expected:
 		return &ConflictError{Bucket: s.kv.bucket, ID: id}
@@ -434,5 +442,34 @@ func (s *AuthStore) PutFile(ctx context.Context, id string, data []byte) error {
 		return err
 	}
 	s.revisions[id] = rev
+	s.noteRevision(id, rev)
+	return nil
+}
+
+// noteRevision raises the ordering floor. It expects s.mu to be held.
+func (s *AuthStore) noteRevision(id string, rev uint64) {
+	if rev > s.floor[id] {
+		s.floor[id] = rev
+	}
+}
+
+// DeleteObserved removes a credential whose file disappeared from the spool,
+// but only the revision this store has seen. A credential it never saw, or one
+// that changed since, is left alone: the file went missing because a remote
+// delete was applied or a remote change has not arrived yet, not because the
+// credential should go.
+func (s *AuthStore) DeleteObserved(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	observed := s.revisions[id]
+	if observed == 0 {
+		return nil
+	}
+	err := s.kv.Delete(ctx, id, observed)
+	if err != nil && !errors.Is(err, ErrConflict) {
+		return err
+	}
+	// Either the delete landed or a newer revision won; the watch reports it.
+	delete(s.revisions, id)
 	return nil
 }

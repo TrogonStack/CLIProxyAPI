@@ -32,6 +32,10 @@ type Store struct {
 	spoolRoot  string
 	configPath string
 
+	syncMu sync.Mutex
+	cancel context.CancelFunc
+	done   chan struct{}
+
 	mu sync.Mutex
 	// configData is the config last written to or read from the spool, so the
 	// watcher echoing that write back is not stored again.
@@ -83,9 +87,43 @@ func newReplicaID() (string, error) {
 // ReplicaID identifies this process in the values it writes.
 func (s *Store) ReplicaID() string { return s.replicaID }
 
-// Close closes the NATS connection.
+// StartSync follows the buckets until the store is closed or ctx ends, mirroring
+// changes other replicas make into the spool. It returns at once, runs in the
+// background and does nothing when already started. Bootstrap first, so the
+// watch only has to catch up on what changed since.
+func (s *Store) StartSync(ctx context.Context) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.cancel != nil {
+		return
+	}
+	ctx, s.cancel = context.WithCancel(ctx)
+	done := make(chan struct{})
+	s.done = done
+	go func() {
+		defer close(done)
+		s.auth.kv.Follow(ctx, s.auth.applyEvent)
+	}()
+}
+
+func (s *Store) stopSync() {
+	s.syncMu.Lock()
+	cancel, done := s.cancel, s.done
+	s.cancel, s.done = nil, nil
+	s.syncMu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
+}
+
+// Close stops following the buckets and closes the NATS connection.
 func (s *Store) Close() error {
-	if s != nil && s.nc != nil {
+	if s == nil {
+		return nil
+	}
+	s.stopSync()
+	if s.nc != nil {
 		s.nc.Close()
 	}
 	return nil
@@ -257,7 +295,7 @@ func (s *Store) PersistAuthFiles(ctx context.Context, _ string, paths ...string)
 			return fmt.Errorf("nats store: read auth file: %w", err)
 		}
 		if err != nil || len(data) == 0 {
-			if err := s.auth.Delete(ctx, id); err != nil {
+			if err := s.auth.DeleteObserved(ctx, id); err != nil {
 				return err
 			}
 			continue

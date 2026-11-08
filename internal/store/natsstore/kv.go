@@ -50,6 +50,8 @@ type KV struct {
 	bucket string
 	kv     jetstream.KeyValue
 	origin string
+	// onWatch observes each watch Follow opens, for tests that drop it.
+	onWatch func(jetstream.KeyWatcher)
 }
 
 // KVOption customizes a KV.
