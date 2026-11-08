@@ -397,3 +397,42 @@ func labelFor(metadata map[string]any) string {
 	}
 	return ""
 }
+
+// PutFile stores the bytes of a credential file that something else already
+// wrote into the spool. A file equal to the stored value is a no-op, which
+// absorbs the watcher echoing this process's own writes. Otherwise the write is
+// checked against the last revision seen, and a stale or removed credential is
+// reported as a conflict, so a stale local file never replaces newer
+// credentials.
+func (s *AuthStore) PutFile(ctx context.Context, id string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	expected := s.revisions[id]
+	current, err := s.kv.Get(ctx, id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		if expected != 0 {
+			return &ConflictError{Bucket: s.kv.bucket, ID: id}
+		}
+		rev, err := s.kv.Create(ctx, id, data)
+		if err != nil {
+			return err
+		}
+		s.revisions[id] = rev
+		return nil
+	case err != nil:
+		return err
+	case sameJSON(current.Value, data):
+		s.revisions[id] = current.Revision
+		return nil
+	case current.Revision != expected:
+		return &ConflictError{Bucket: s.kv.bucket, ID: id}
+	}
+	rev, err := s.kv.Update(ctx, id, data, expected)
+	if err != nil {
+		return err
+	}
+	s.revisions[id] = rev
+	return nil
+}
