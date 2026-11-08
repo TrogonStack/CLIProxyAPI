@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Push the verified merge to main and dispatch the image build, or record why it needs a pull request"
+set -euo pipefail
+# The publish job runs these tasks from main with the Barnacle key in reach, so
+# a merge that changes them, mise configuration or a local action must land
+# through a reviewed pull request, never this push. GITHUB_TOKEN already may
+# not push .github/workflows.
+trusted='^(\.github/|\.config/|\.?mise/|\.?mise(\.[^/]+)?\.toml$|\.tool-versions$)'
+reason=""
+if git diff --name-only HEAD "$MERGE_SHA" | grep -Eq "$trusted"; then
+  reason="the merge changes .github, .config or mise configuration, which the publish job runs."
+elif git push origin "$MERGE_SHA:refs/heads/main"; then
+  # Pushes made with GITHUB_TOKEN do not trigger workflows, but
+  # workflow_dispatch does, so start the image build explicitly.
+  gh workflow run trogonstack-image.yml --ref main -f release=true
+  echo "Merged upstream $TAG into main and dispatched the image build with release" >> "$GITHUB_STEP_SUMMARY"
+else
+  reason="the push to main was rejected."
+fi
+echo "reason=$reason" >> "$GITHUB_OUTPUT"

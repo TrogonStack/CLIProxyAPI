@@ -82,11 +82,10 @@ jobs:
         run: mise run github:workflows:trogonstack-sync:verify
 
   # The only job that can read the Barnacle key: the environment admits it
-  # from main, and GCP admits only this file. Main is upstream code after every
-  # clean merge, so this job runs nothing from the checkout, no mise and no
-  # local actions, only the steps below. This file is the one place upstream
-  # cannot change unreviewed: GITHUB_TOKEN may not push workflow changes, so
-  # those land through a pull request.
+  # from main, and GCP admits only this file. It runs mise tasks and a local
+  # action from main, so push-main never lands a merge that changes them;
+  # those, like workflow changes GITHUB_TOKEN may not push, go through a
+  # reviewed pull request.
   # Barnacle opens the sync pull requests, so they run CI and may change
   # workflows, which GITHUB_TOKEN can do neither of.
   publish:
@@ -113,33 +112,15 @@ jobs:
           name: sync
           path: ${{ runner.temp }}
 
-      # The bundle is checked against the sha the merge job recorded before
-      # any upstream code ran, so a test that replaced it is caught here.
-      - name: Fetch the merge
-        run: |
-          git fetch --no-tags "$RUNNER_TEMP/sync.bundle" HEAD
-          if [ "$(git rev-parse FETCH_HEAD)" != "$MERGE_SHA" ]; then
-            echo "The bundle holds $(git rev-parse FETCH_HEAD), not $MERGE_SHA" >&2
-            exit 1
-          fi
+      - uses: ./.github/actions/setup-mise
 
-      # Pushed with GITHUB_TOKEN so the push itself starts no image build; the
-      # dispatch starts the one that releases. GITHUB_TOKEN cannot push commits
-      # that touch .github/workflows, and upstream changes those every month or
-      # so, so a rejected push goes to a pull request instead.
+      - name: Fetch the merge
+        run: mise run github:workflows:trogonstack-sync:fetch-merge
+
       - name: Push main and build image
         id: push
         if: needs.merge.outputs.verified == 'success'
-        run: |
-          if git push origin "$MERGE_SHA:refs/heads/main"; then
-            gh workflow run trogonstack-image.yml --ref main -f release=true
-            echo "Merged upstream $TAG into main and dispatched the image build with release" >> "$GITHUB_STEP_SUMMARY"
-            echo "reason=" >> "$GITHUB_OUTPUT"
-          elif git log --format= --name-only "origin/main..$MERGE_SHA" -- .github/workflows | grep -q .; then
-            echo "reason=the merge changes .github/workflows, which GITHUB_TOKEN may not push." >> "$GITHUB_OUTPUT"
-          else
-            echo "reason=the push to main was rejected." >> "$GITHUB_OUTPUT"
-          fi
+        run: mise run github:workflows:trogonstack-sync:push-main
 
       - name: Google Cloud auth
         if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
@@ -167,58 +148,14 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # Pushed as Barnacle so the pull request runs CI and may change
-      # workflows. An open pull request may already carry fixes, so its branch
-      # is left alone; without one the branch is stale and is replaced.
-      # actions/checkout sends GITHUB_TOKEN as an extra header, which would win
-      # over the credential helper, so that header is reset for this push.
       - name: Publish the merge as a pull request
         if: needs.merge.outputs.verified != 'success' || steps.push.outputs.reason != ''
         env:
-          GH_TOKEN: ${{ steps.barnacle.outputs.token }}
+          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
           CONFLICT: ${{ needs.merge.outputs.conflict }}
           VERIFIED: ${{ needs.merge.outputs.verified }}
           PUSH_REASON: ${{ steps.push.outputs.reason }}
-        run: |
-          branch="sync/$TAG"
-          existing="$(gh pr list --state open --head "$branch" --json url --jq '.[0].url // ""')"
-          if [ -n "$existing" ]; then
-            echo "Upstream $TAG is still pending on $existing" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          if [ "$CONFLICT" = "true" ]; then
-            reason="it conflicts with main."
-          elif [ "$VERIFIED" = "failure" ]; then
-            reason="build or tests failed."
-          else
-            reason="$PUSH_REASON"
-          fi
-
-          # shellcheck disable=SC2016 # expanded by the credential helper
-          git -c http.https://github.com/.extraheader= -c credential.helper= \
-            -c 'credential.helper=!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
-            push --force origin "$MERGE_SHA:refs/heads/$branch"
-
-          {
-            echo "Merging upstream $TAG into main needs a fix before it can land: $reason"
-            # Only a conflicting merge skips the build and tests, so only then
-            # is the list known to be written before any upstream code ran.
-            if [ "$CONFLICT" = "true" ] && [ -s "$RUNNER_TEMP/conflicts.txt" ]; then
-              echo
-              echo "Conflicting files, committed with their markers:"
-              # shellcheck disable=SC2016 # literal backticks for markdown
-              head -n 200 "$RUNNER_TEMP/conflicts.txt" | sed 's/^/- `/; s/$/`/'
-            fi
-            echo
-            echo "Run: $RUN_URL"
-            echo
-            echo "Fix on this branch, mark it ready, then merge it into main."
-          } > "$RUNNER_TEMP/pr-body.txt"
-          url="$(gh pr create --draft --base main --head "$branch" \
-            --title "chore(sync): merge upstream $TAG" --body-file "$RUNNER_TEMP/pr-body.txt")"
-          echo "Upstream $TAG is pending on $url" >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+        run: mise run github:workflows:trogonstack-sync:publish-pull-request
 
   # Main may hold fork-only commits that were never released. The release
   # workflow is idempotent, so run it for HEAD when it has an image, and build
