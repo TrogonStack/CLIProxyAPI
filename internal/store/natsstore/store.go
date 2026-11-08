@@ -32,6 +32,7 @@ type Store struct {
 	journal    *RefreshJournal
 	refresh    *RefreshQueue
 	leases     *KV
+	cooldown   *CooldownStore
 	spoolRoot  string
 	configPath string
 
@@ -79,6 +80,7 @@ func NewStore(nc *nats.Conn, boot *Bootstrapped, settings StoreSettings, spoolDi
 		journal:    NewRefreshJournal(NewKV(settings.BucketName(BucketRefresh), boot.Bucket(settings, BucketRefresh), origin)),
 		refresh:    boot.Refresh,
 		leases:     NewKV(settings.BucketName(BucketLease), boot.Bucket(settings, BucketLease), origin),
+		cooldown:   NewCooldownStore(NewKV(settings.BucketName(BucketCooldown), boot.Bucket(settings, BucketCooldown), origin)),
 		spoolRoot:  root,
 		configPath: filepath.Join(configDir, "config.yaml"),
 	}, nil
