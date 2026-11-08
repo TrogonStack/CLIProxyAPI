@@ -36,6 +36,11 @@ type Store struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	// configMu keeps a watched config landing in the spool and the revision it
+	// advances to together, so a persist never reads the file between them and
+	// writes an older config over the newer one.
+	configMu sync.Mutex
+
 	mu sync.Mutex
 	// configData is the config last written to or read from the spool, so the
 	// watcher echoing that write back is not stored again.
@@ -100,9 +105,19 @@ func (s *Store) StartSync(ctx context.Context) {
 	ctx, s.cancel = context.WithCancel(ctx)
 	done := make(chan struct{})
 	s.done = done
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		defer close(done)
+		defer wg.Done()
 		s.auth.kv.Follow(ctx, s.auth.applyEvent)
+	}()
+	go func() {
+		defer wg.Done()
+		s.config.kv.Follow(ctx, s.applyConfigEvent)
+	}()
+	go func() {
+		wg.Wait()
+		close(done)
 	}()
 }
 
@@ -252,6 +267,8 @@ func (s *Store) syncAuth(ctx context.Context) error {
 // file is ignored, since it is more likely a write in progress than an intent
 // to wipe the config every replica shares.
 func (s *Store) PersistConfig(ctx context.Context) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	data, err := os.ReadFile(s.configPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
