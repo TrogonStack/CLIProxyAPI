@@ -31,9 +31,14 @@ type DriftError struct {
 	Bucket string
 	// Fields lists each mismatch as `name: have X, want Y`.
 	Fields []string
+	// Remedy replaces the default advice, for buckets startup never reconciles.
+	Remedy string
 }
 
 func (e *DriftError) Error() string {
+	if e.Remedy != "" {
+		return fmt.Sprintf("bucket %s differs from the expected configuration (%s); %s", e.Bucket, strings.Join(e.Fields, "; "), e.Remedy)
+	}
 	return fmt.Sprintf("bucket %s differs from the expected configuration (%s); update it to match or set %s=%s to let startup reconcile it",
 		e.Bucket, strings.Join(e.Fields, "; "), EnvStoreCreate, CreateAuto)
 }
@@ -75,7 +80,11 @@ func Bootstrap(ctx context.Context, nc *nats.Conn, settings StoreSettings) (*Boo
 
 	buckets := make(map[string]jetstream.KeyValue)
 	for _, spec := range settings.Buckets() {
-		kv, err := EnsureBucket(ctx, js, spec, settings.Create)
+		ensure := EnsureBucket
+		if spec.Name == settings.BucketName(BucketRefresh) {
+			ensure = EnsureRefreshBucket
+		}
+		kv, err := ensure(ctx, js, spec, settings.Create)
 		if err != nil {
 			return nil, err
 		}
