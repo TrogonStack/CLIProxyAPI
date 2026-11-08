@@ -118,6 +118,14 @@ func (k *KV) Create(ctx context.Context, id string, value []byte) (uint64, error
 	return rev, nil
 }
 
+// CreateOnce writes a value only if the key was never written. Unlike Create it
+// treats a delete marker as a write, so deleting a key does not reopen it.
+func (k *KV) CreateOnce(ctx context.Context, id string, value []byte) (uint64, error) {
+	// An expected revision of zero asks the server for a subject with no
+	// message at all, markers included, where Create retries over a marker.
+	return k.Update(ctx, id, value, 0)
+}
+
 // Update writes a value only if the key is still at the expected revision.
 func (k *KV) Update(ctx context.Context, id string, value []byte, expected uint64) (uint64, error) {
 	key, err := EncodeKey(id)
