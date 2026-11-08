@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Merge the upstream tag, or open a conflict issue and fail"
+#MISE description="Merge the upstream tag, committing any conflicts so they can be published as a pull request"
 set -euo pipefail
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -7,27 +7,9 @@ if git merge --no-ff --no-edit -m "chore(sync): merge upstream $TAG" "refs/tags/
   echo "conflict=false" >> "$GITHUB_OUTPUT"
   exit 0
 fi
-echo "conflict=true" >> "$GITHUB_OUTPUT"
+# Commit the conflict markers instead of aborting, so the merge can be
+# finished on the pull request branch rather than redone by hand.
 git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
-git merge --abort
-title="Upstream sync conflict: $TAG"
-{
-  echo "Merging upstream $TAG into main hit conflicts."
-  echo
-  echo "Conflicting files:"
-  sed 's/^/- /' "$RUNNER_TEMP/conflicts.txt"
-  echo
-  echo "Run: $RUN_URL"
-  echo
-  echo "Resolve locally with: git merge $TAG, then push the result to main."
-} > "$RUNNER_TEMP/conflict-body.txt"
-# gh under GITHUB_TOKEN is non-interactive: pass the body by file so no
-# editor or prompt is needed, and skip labels that may not exist.
-existing="$(gh issue list --state open --limit 200 --json number,title \
-  --jq "[.[] | select(.title == \"$title\")] | length")"
-if [ "$existing" = "0" ]; then
-  gh issue create --title "$title" --body-file "$RUNNER_TEMP/conflict-body.txt"
-else
-  echo "Open conflict issue already exists"
-fi
-exit 1
+git add -A
+git commit --no-edit -m "chore(sync): merge upstream $TAG with conflicts"
+echo "conflict=true" >> "$GITHUB_OUTPUT"

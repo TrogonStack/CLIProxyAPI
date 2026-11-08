@@ -13,10 +13,9 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
   actions: write
   packages: read
+  id-token: write
 
 concurrency:
   group: trogonstack-sync
@@ -32,7 +31,35 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # The environment is what lets this job read the Barnacle key, and only
+    # from main. Barnacle opens the sync pull requests, so they run CI and may
+    # change workflows, which GITHUB_TOKEN can do neither of.
+    environment: github-app-barnacle
     steps:
+      - name: Google Cloud auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: shp-terraform
+          workload_identity_provider: projects/630372936919/locations/global/workloadIdentityPools/github-app-barnacle/providers/trogonstack
+
+      - name: Barnacle key
+        id: barnacle_key
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |-
+            private_key:shp-terraform/github-app-barnacle-trogonstack-private-key
+
+      - name: Barnacle token
+        id: barnacle
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BARNACLE_APP_CLIENT_ID }}
+          private-key: ${{ steps.barnacle_key.outputs.private_key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
@@ -50,7 +77,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: mise run github:workflows:trogonstack-sync:merge-upstream
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.tag.outputs.up_to_date == 'false'
+        if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'false'
         with:
           go-version-file: go.mod
           cache: true
@@ -60,18 +87,28 @@ jobs:
       # subset here instead of skipping verification.
       - name: Build and test
         id: verify
-        if: steps.tag.outputs.up_to_date == 'false'
+        if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'false'
         continue-on-error: true
         run: mise run github:workflows:trogonstack-sync:verify
+      - name: Publish conflicting merge as a pull request
+        if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          REASON: it conflicts with main.
+          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
+        run: mise run github:workflows:trogonstack-sync:publish-pull-request
       - name: Publish failing merge as a pull request
         if: steps.tag.outputs.up_to_date == 'false' && steps.verify.outcome == 'failure'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          REASON: build or tests failed.
+          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
         run: mise run github:workflows:trogonstack-sync:publish-pull-request
       - name: Push main and build image
         if: steps.tag.outputs.up_to_date == 'false' && steps.verify.outcome == 'success'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          BARNACLE_TOKEN: ${{ steps.barnacle.outputs.token }}
         run: mise run github:workflows:trogonstack-sync:push-main
       # Main may hold fork-only commits that were never released. The release
       # workflow is idempotent, so run it for HEAD when it has an image, and
