@@ -198,6 +198,9 @@ func (h *Handler) ConfigV8(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "write_failed", "message": err.Error()})
 		return
 	}
+	if !h.commitConfig(c) {
+		return
+	}
 	// Runtime-only ownership state is never sourced from an uploaded YAML document.
 	next.Home = h.cfg.Home
 	// WriteConfig may normalize the bytes, so report the version actually on

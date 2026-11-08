@@ -170,6 +170,9 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "write_failed", "message": "failed to write config"})
 		return
 	}
+	if !h.commitConfig(c) {
+		return
+	}
 	// Reload into handler to keep memory in sync
 	newCfg, err := config.LoadConfig(h.configFilePath)
 	if err != nil {

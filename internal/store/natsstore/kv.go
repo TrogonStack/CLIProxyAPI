@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 var (
@@ -27,8 +28,10 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("revision conflict on %s in bucket %s", e.ID, e.Bucket)
 }
 
-// Is makes errors.Is(err, ErrConflict) match.
-func (e *ConflictError) Is(target error) bool { return target == ErrConflict }
+// Is makes errors.Is match ErrConflict and the SDK-level auth.ErrStoreConflict.
+func (e *ConflictError) Is(target error) bool {
+	return target == ErrConflict || target == coreauth.ErrStoreConflict
+}
 
 // Entry is one live value with the revision a later write must present.
 type Entry struct {

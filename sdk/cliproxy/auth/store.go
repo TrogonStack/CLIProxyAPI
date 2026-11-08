@@ -1,6 +1,13 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrStoreConflict is matched by the error a store returns when a write lost to
+// a concurrent change made by another replica sharing the backend.
+var ErrStoreConflict = errors.New("store revision conflict")
 
 // Store abstracts persistence of Auth state across restarts.
 type Store interface {

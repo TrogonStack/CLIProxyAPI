@@ -5,6 +5,7 @@ package management
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -457,12 +458,42 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 	return true, 0, ""
 }
 
+// configCommitter is implemented by token stores shared between replicas that
+// can store the config file synchronously and detect a concurrent change.
+type configCommitter interface {
+	CommitConfig(ctx context.Context) error
+}
+
+// commitConfig stores the config file just written in a shared backend. It
+// answers 409 when another replica changed the config first, in which case the
+// file now holds that config, and 500 on other failures. It reports whether
+// the caller may go on, and does nothing for stores that are not shared.
+func (h *Handler) commitConfig(c *gin.Context) bool {
+	committer, ok := h.tokenStore.(configCommitter)
+	if !ok {
+		return true
+	}
+	err := committer.CommitConfig(c.Request.Context())
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, coreauth.ErrStoreConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "message": "the config was changed by another replica, reload it and retry"})
+		return false
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to store config: %v", err)})
+	return false
+}
+
 // persistLocked saves the current in-memory config to disk.
 // It expects the caller to hold h.mu.
 func (h *Handler) persistLocked(c *gin.Context) bool {
 	// Preserve comments when writing
 	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg, c.GetBool(ConfigV8ContextKey)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save config: %v", err)})
+		return false
+	}
+	if !h.commitConfig(c) {
 		return false
 	}
 	snapshot := h.reloadSnapshotConfigLocked()
