@@ -31,6 +31,7 @@ type Store struct {
 	config     *ConfigStore
 	journal    *RefreshJournal
 	refresh    *RefreshQueue
+	leases     *KV
 	spoolRoot  string
 	configPath string
 
@@ -77,6 +78,7 @@ func NewStore(nc *nats.Conn, boot *Bootstrapped, settings StoreSettings, spoolDi
 		config:     cfg,
 		journal:    NewRefreshJournal(NewKV(settings.BucketName(BucketRefresh), boot.Bucket(settings, BucketRefresh), origin)),
 		refresh:    boot.Refresh,
+		leases:     NewKV(settings.BucketName(BucketLease), boot.Bucket(settings, BucketLease), origin),
 		spoolRoot:  root,
 		configPath: filepath.Join(configDir, "config.yaml"),
 	}, nil

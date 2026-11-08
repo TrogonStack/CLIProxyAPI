@@ -118,6 +118,26 @@ func (k *KV) Create(ctx context.Context, id string, value []byte) (uint64, error
 	return rev, nil
 }
 
+// CreateWithTTL writes a value only if the key has no live value, and the
+// server removes it after ttl. The expiry is fixed at creation: an Update drops
+// it, so a key that must expire again is deleted and created anew. It needs a
+// bucket with a marker TTL.
+func (k *KV) CreateWithTTL(ctx context.Context, id string, value []byte, ttl time.Duration) (uint64, error) {
+	key, err := EncodeKey(id)
+	if err != nil {
+		return 0, err
+	}
+	stored, err := k.wrap(value, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode %s for %s: %w", id, k.bucket, err)
+	}
+	rev, err := k.kv.Create(ctx, key, stored, jetstream.KeyTTL(ttl))
+	if err != nil {
+		return 0, k.writeError("create", id, err)
+	}
+	return rev, nil
+}
+
 // CreateOnce writes a value only if the key was never written. Unlike Create it
 // treats a delete marker as a write, so deleting a key does not reopen it.
 func (k *KV) CreateOnce(ctx context.Context, id string, value []byte) (uint64, error) {
