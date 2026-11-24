@@ -5,12 +5,13 @@ set -euo pipefail
 # a merge that changes them, mise configuration or a local action must land
 # through a reviewed pull request, never this push. GITHUB_TOKEN already may
 # not push .github/workflows.
-trusted='^(\.github/|\.config/|\.?mise/|\.?mise(\.[^/]+)?\.toml$|\.tool-versions$)'
+trusted='^(\.github/|\.config/|\.?mise/|\.?mise(\.[^/]+)?\.(toml|lock)$|\.tool-versions$)'
 reason=""
-# Captured first so a failing diff stops the script instead of reading as no
-# match, and so grep -q cannot cut the pipe short under pipefail.
-changed="$(git diff --name-only --no-renames HEAD "$MERGE_SHA")"
-if grep -Eq "$trusted" <<<"$changed"; then
+# Written to a file first so a failing diff stops the script instead of reading
+# as no match. NUL-delimited so git does not quote unusual path names, which
+# would hide a trusted prefix from the match.
+git diff -z --name-only --no-renames HEAD "$MERGE_SHA" > "$RUNNER_TEMP/changed.txt"
+if grep -Ezq "$trusted" "$RUNNER_TEMP/changed.txt"; then
   reason="the merge changes .github, .config or mise configuration, which the publish job runs."
 elif git push origin "$MERGE_SHA:refs/heads/main"; then
   # Pushes made with GITHUB_TOKEN do not trigger workflows, but

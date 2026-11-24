@@ -32,7 +32,9 @@ case "$result" in
 esac
 
 version="${result#next }"
-crane tag "$IMAGE:$COMMIT" "$version"
+# Tag the digest recorded above: the commit tag is mutable, and a rebuild of
+# the same commit could repoint it before this runs.
+crane tag "$IMAGE@$digest" "$version"
 
 tagged="$(crane digest "$IMAGE:$version")"
 if [ "$tagged" != "$digest" ]; then

@@ -79,6 +79,10 @@ jobs:
         id: verify
         if: steps.tag.outputs.up_to_date == 'false' && steps.merge.outputs.conflict == 'false'
         continue-on-error: true
+        # Shorter than the job's timeout: a hung test then fails this step,
+        # which still lets publish open the draft pull request. The job timeout
+        # would cancel the job and skip publish.
+        timeout-minutes: 45
         run: mise run github:workflows:trogonstack-sync:verify
 
   # The only job that can read the Barnacle key: the environment admits it
