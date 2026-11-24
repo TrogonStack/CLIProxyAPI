@@ -39,6 +39,11 @@ func (h *GeminiAPIHandler) HandlerType() string {
 	return Gemini
 }
 
+// ModelsForRequest returns the models visible to the request's client key.
+func (h *GeminiAPIHandler) ModelsForRequest(c *gin.Context) []map[string]any {
+	return h.AvailableModelsForRequest(c, "gemini")
+}
+
 // Models returns the Gemini-compatible model metadata supported by this handler.
 func (h *GeminiAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
@@ -49,7 +54,7 @@ func (h *GeminiAPIHandler) Models() []map[string]any {
 // GeminiModels handles the Gemini models listing endpoint.
 // It returns a JSON response containing available Gemini models and their specifications.
 func (h *GeminiAPIHandler) GeminiModels(c *gin.Context) {
-	rawModels := h.Models()
+	rawModels := h.ModelsForRequest(c)
 	normalizedModels := make([]map[string]any, 0, len(rawModels))
 	defaultMethods := []string{"generateContent"}
 	for _, model := range rawModels {
@@ -96,7 +101,7 @@ func (h *GeminiAPIHandler) GeminiGetHandler(c *gin.Context) {
 	action := strings.TrimPrefix(request.Action, "/")
 
 	// Get dynamic models from the global registry and find the matching one
-	availableModels := h.Models()
+	availableModels := h.ModelsForRequest(c)
 	var targetModel map[string]any
 
 	for _, model := range availableModels {

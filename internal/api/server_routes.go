@@ -28,6 +28,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/turncost"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/gemini"
@@ -723,7 +724,7 @@ func (s *Server) handleGrokModels(c *gin.Context) {
 		}
 		models = grokModelsFromHomeEntries(entries)
 	} else {
-		models = grokModelsFromRegistryInfos(registry.GetGlobalRegistry().GetAvailableModelInfos())
+		models = grokModelsFromRegistryInfos(s.availableModelInfosForRequest(c))
 	}
 	s.writeModelListResponse(c, "openai", grokbuild.BuildResponse(models))
 }
@@ -1192,9 +1193,27 @@ func (s *Server) handleHomeGeminiModel(c *gin.Context) {
 	})
 }
 
+// availableModelInfosForRequest lists model metadata visible to the request's client key.
+func (s *Server) availableModelInfosForRequest(c *gin.Context) []*registry.ModelInfo {
+	modelRegistry := registry.GetGlobalRegistry()
+	refs := sdkaccess.AllowedAuthsFromGin(c)
+	if len(refs) == 0 {
+		return modelRegistry.GetAvailableModelInfos()
+	}
+	if s == nil || s.handlers == nil || s.handlers.AuthManager == nil {
+		return nil
+	}
+	return modelRegistry.GetAvailableModelInfosForClients(s.handlers.AuthManager.AllowedAuthIDs(refs))
+}
+
 func (s *Server) loadHomeModelEntries(c *gin.Context) ([]homeModelEntry, bool) {
 	if s == nil || c == nil || c.Request == nil {
 		return nil, false
+	}
+	if len(sdkaccess.AllowedAuthsFromGin(c)) > 0 {
+		// Home chooses credentials itself and cannot honor a key binding, so a
+		// bound key sees no models, matching the dispatch refusal.
+		return nil, true
 	}
 	client := home.Current()
 	if client == nil {

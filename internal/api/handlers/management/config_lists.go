@@ -158,14 +158,19 @@ func (h *Handler) deleteFromStringList(c *gin.Context, targetOf func() *[]string
 func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
 func (h *Handler) PutAPIKeys(c *gin.Context) {
 	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
+		h.cfg.SetAPIKeyStrings(v)
 	}, nil)
 }
+
+// PatchAPIKeys and DeleteAPIKeys edit the plain key strings and keep the
+// credential binding of every key that survives the edit.
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, func() *[]string { return &h.cfg.APIKeys }, func() {})
+	keys := h.cfg.APIKeyStrings()
+	h.patchStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
 }
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, func() *[]string { return &h.cfg.APIKeys }, func() {})
+	keys := h.cfg.APIKeyStrings()
+	h.deleteFromStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
 }
 
 // gemini-api-key: []GeminiKey

@@ -25,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	cliproxysession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -3291,6 +3292,107 @@ func disallowFreeAuthFromMetadata(meta map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+// allowedAuthsFromMetadata parses the client-key credential restriction. It returns nil
+// when the request is unrestricted. A restriction that cannot be parsed fails closed by
+// returning an empty, non-nil set.
+func allowedAuthsFromMetadata(meta map[string]any) map[string]struct{} {
+	if len(meta) == 0 {
+		return nil
+	}
+	raw, ok := meta[cliproxyexecutor.AllowedAuthsMetadataKey]
+	if !ok || raw == nil {
+		return nil
+	}
+	var refs []string
+	switch val := raw.(type) {
+	case []string:
+		refs = val
+	case []any:
+		for _, item := range val {
+			ref, isString := item.(string)
+			if !isString {
+				return map[string]struct{}{}
+			}
+			refs = append(refs, ref)
+		}
+	default:
+		return map[string]struct{}{}
+	}
+	set := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if trimmed := strings.TrimSpace(ref); trimmed != "" {
+			set[trimmed] = struct{}{}
+		}
+	}
+	if len(set) == 0 && len(refs) == 0 {
+		return nil
+	}
+	return set
+}
+
+// allowedAuthsForRequest returns the client-key credential restriction of a request. It
+// reads the execution metadata first and falls back to the authenticated request carried
+// by ctx, so selections made outside the regular handler path stay restricted too.
+func allowedAuthsForRequest(ctx context.Context, meta map[string]any) map[string]struct{} {
+	if set := allowedAuthsFromMetadata(meta); set != nil {
+		return set
+	}
+	if ctx == nil {
+		return nil
+	}
+	ginCtx, ok := ctx.Value("gin").(interface{ Get(string) (any, bool) })
+	if !ok || ginCtx == nil {
+		return nil
+	}
+	value, exists := ginCtx.Get(sdkaccess.AllowedAuthsContextKey)
+	if !exists {
+		return nil
+	}
+	if value == nil {
+		return nil
+	}
+	refs, isRefs := value.([]string)
+	if !isRefs {
+		// An unreadable restriction must not widen access.
+		return map[string]struct{}{}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return allowedAuthsFromMetadata(map[string]any{cliproxyexecutor.AllowedAuthsMetadataKey: refs})
+}
+
+// AuthAllowedByRefs reports whether the credential is permitted by a client-key restriction
+// given as credential IDs or file names. An empty restriction permits every credential.
+func AuthAllowedByRefs(auth *Auth, refs []string) bool {
+	if len(refs) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if trimmed := strings.TrimSpace(ref); trimmed != "" {
+			set[trimmed] = struct{}{}
+		}
+	}
+	return authMatchesAllowedSet(set, auth)
+}
+
+// authMatchesAllowedSet reports whether the credential ID or file name is in the set.
+func authMatchesAllowedSet(set map[string]struct{}, auth *Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if _, ok := set[auth.ID]; ok {
+		return true
+	}
+	if name := strings.TrimSpace(auth.FileName); name != "" {
+		if _, ok := set[name]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func isFreeCodexAuth(auth *Auth) bool {

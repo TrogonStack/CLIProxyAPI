@@ -1604,6 +1604,92 @@ func (r *ModelRegistry) GetAvailableModels(handlerType string) []map[string]any 
 	return models
 }
 
+// availableRegistrationsForClientsLocked returns the registrations that are available when
+// only the given clients are considered. The caller must hold r.mutex.
+func (r *ModelRegistry) availableRegistrationsForClientsLocked(clientIDs map[string]struct{}, now time.Time) []*ModelRegistration {
+	counts := make(map[string]int)
+	for clientID := range clientIDs {
+		seen := make(map[string]struct{}, len(r.clientModels[clientID]))
+		for _, modelID := range r.clientModels[clientID] {
+			if _, dup := seen[modelID]; dup {
+				continue
+			}
+			seen[modelID] = struct{}{}
+			counts[modelID]++
+		}
+	}
+	out := make([]*ModelRegistration, 0, len(counts))
+	for modelID, count := range counts {
+		registration := r.models[modelID]
+		if registration == nil {
+			continue
+		}
+		scoped := &ModelRegistration{
+			Info:                     registration.Info,
+			InfoByProvider:           registration.InfoByProvider,
+			Count:                    count,
+			LastUpdated:              registration.LastUpdated,
+			QuotaExceededClients:     filterClientMap(registration.QuotaExceededClients, clientIDs),
+			SuspendedClients:         filterClientMap(registration.SuspendedClients, clientIDs),
+			SuspendedClientDeadlines: filterClientMap(registration.SuspendedClientDeadlines, clientIDs),
+		}
+		if available, _ := modelRegistrationAvailability(scoped, now); available {
+			out = append(out, scoped)
+		}
+	}
+	return out
+}
+
+// GetAvailableModelsForClients returns the available models that at least one of the
+// given clients serves, computed only from those clients. It is not cached because the
+// client set varies per API key. An empty set returns no models.
+func (r *ModelRegistry) GetAvailableModelsForClients(handlerType string, clientIDs map[string]struct{}) []map[string]any {
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	registrations := r.availableRegistrationsForClientsLocked(clientIDs, now)
+	models := make([]map[string]any, 0, len(registrations))
+	for _, registration := range registrations {
+		if model := r.convertModelToMap(registration.Info, handlerType); model != nil {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
+// GetAvailableModelInfosForClients is GetAvailableModelInfos limited to the given clients.
+func (r *ModelRegistry) GetAvailableModelInfosForClients(clientIDs map[string]struct{}) []*ModelInfo {
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	registrations := r.availableRegistrationsForClientsLocked(clientIDs, now)
+	result := make([]*ModelInfo, 0, len(registrations))
+	for _, registration := range registrations {
+		if registration.Info != nil {
+			result = append(result, cloneModelInfo(registration.Info))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.TrimSpace(result[i].ID) < strings.TrimSpace(result[j].ID)
+	})
+	return result
+}
+
+func filterClientMap[V any](in map[string]V, keep map[string]struct{}) map[string]V {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]V, len(in))
+	for clientID, value := range in {
+		if _, ok := keep[clientID]; ok {
+			out[clientID] = value
+		}
+	}
+	return out
+}
+
 // isQuotaSuspension reports whether a suspension is a quota cooldown. A model in a
 // quota cooldown stays listed: the limit is temporary, and a request meanwhile gets a
 // 429 with its retry time instead of an unknown model. A credential-wide quota

@@ -22,6 +22,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -438,6 +439,11 @@ func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurn(c *gin.Co
 			c.Set("accessMetadata", result.Metadata)
 		} else {
 			c.Set("accessMetadata", nil)
+		}
+		if len(result.AllowedAuths) > 0 {
+			c.Set(sdkaccess.AllowedAuthsContextKey, result.AllowedAuths)
+		} else {
+			c.Set(sdkaccess.AllowedAuthsContextKey, nil)
 		}
 		if c.Request != nil {
 			reqCtx := usage.WithAPIKey(c.Request.Context(), result.Principal)

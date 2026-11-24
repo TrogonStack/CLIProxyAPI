@@ -112,7 +112,7 @@ func TestConfigV8ETagIfMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.APIKeys) != 1 || loaded.APIKeys[0] != "other-key" {
+	if len(loaded.APIKeys) != 1 || loaded.APIKeys[0].Key != "other-key" {
 		t.Fatalf("stale PUT resurrected revoked key: %v", loaded.APIKeys)
 	}
 

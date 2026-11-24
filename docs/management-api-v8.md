@@ -73,7 +73,7 @@ the corresponding group value. Legacy field names are rejected by v8 writes.
 
 | Example path | Value or purpose |
 | --- | --- |
-| `/config/access/api-keys` | Client authentication keys, for example `["client-key"]`. |
+| `/config/access/api-keys` | Client authentication keys. Each entry is a plain string or a `{"key": "...", "auths": ["file.json"]}` object that binds the key to credentials, for example `["client-key", {"key": "personal", "auths": ["codex-personal.json"]}]`. |
 | `/config/api-keys` | All upstream provider groups. |
 | `/config/api-keys/codex` | Codex upstream groups. |
 | `/config/client/codex/optimize-multi-agent-v2` | Boolean, default `false`; applies to Codex clients across OAuth and API-key routes. |

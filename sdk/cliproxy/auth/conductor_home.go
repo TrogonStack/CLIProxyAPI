@@ -1015,6 +1015,15 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 	if m == nil {
 		return nil, &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
+	if allowedAuthsForRequest(ctx, opts.Metadata) != nil {
+		// Home chooses the credential on its own side and cannot enforce a
+		// per-key credential binding, so a bound key must not be dispatched.
+		return nil, &Error{
+			Code:       "api_key_auth_binding_unsupported",
+			Message:    "api key credential binding is not supported in home mode",
+			HTTPStatus: http.StatusForbidden,
+		}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

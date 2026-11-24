@@ -29,7 +29,7 @@ func (s *Server) applyAccessConfig(oldCfg, newCfg *config.Config) bool {
 		return false
 	}
 	if s.tunnelHub != nil {
-		s.tunnelHub.UpdateAllowedAPIKeys(newCfg.APIKeys)
+		s.tunnelHub.UpdateAllowedAPIKeys(newCfg.APIKeyStrings())
 	}
 	if s.accessManager == nil {
 		return false

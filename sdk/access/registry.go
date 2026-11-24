@@ -17,7 +17,10 @@ type Provider interface {
 type Result struct {
 	Provider  string
 	Principal string
-	Metadata  map[string]string
+	// AllowedAuths restricts the request to the listed credentials (credential
+	// IDs or file names). Empty means the principal is not restricted.
+	AllowedAuths []string
+	Metadata     map[string]string
 }
 
 var (

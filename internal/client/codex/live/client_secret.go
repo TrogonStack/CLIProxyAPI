@@ -14,6 +14,7 @@ import (
 	"github.com/MoeForge/moego/json"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 )
 
 const (
@@ -39,7 +40,10 @@ type ClientSecretAuthorization struct {
 	Principal       string
 	IssuerPrincipal string
 	IssuerProvider  string
-	Session         json.RawMessage
+	// IssuerAllowedAuths carries the credential restriction of the key that
+	// minted the secret, so the secret cannot reach other credentials.
+	IssuerAllowedAuths []string
+	Session            json.RawMessage
 }
 
 type clientSecretEntry struct {
@@ -74,7 +78,7 @@ func newClientSecretStore() *clientSecretStore {
 	}
 }
 
-func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string) (string, ClientSecretAuthorization, time.Time, error) {
+func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Duration, issuerPrincipal, issuerProvider string, issuerAllowedAuths []string) (string, ClientSecretAuthorization, time.Time, error) {
 	if s == nil {
 		return "", ClientSecretAuthorization{}, time.Time{}, errors.New("Realtime client secret store unavailable")
 	}
@@ -87,10 +91,11 @@ func (s *clientSecretStore) create(session json.RawMessage, lifetime time.Durati
 		return "", ClientSecretAuthorization{}, time.Time{}, errSessionID
 	}
 	authorization := ClientSecretAuthorization{
-		Principal:       sessionID,
-		IssuerPrincipal: strings.TrimSpace(issuerPrincipal),
-		IssuerProvider:  strings.TrimSpace(issuerProvider),
-		Session:         append(json.RawMessage(nil), session...),
+		Principal:          sessionID,
+		IssuerPrincipal:    strings.TrimSpace(issuerPrincipal),
+		IssuerProvider:     strings.TrimSpace(issuerProvider),
+		IssuerAllowedAuths: append([]string(nil), issuerAllowedAuths...),
+		Session:            append(json.RawMessage(nil), session...),
 	}
 	now := s.currentTime()
 	expiresAt := now.Add(lifetime)
@@ -270,7 +275,11 @@ func (h *Handler) createClientSecret(c *gin.Context, session json.RawMessage, ex
 	issuerProvider, _ := c.Get("accessProvider")
 	issuerPrincipalValue, _ := issuerPrincipal.(string)
 	issuerProviderValue, _ := issuerProvider.(string)
-	token, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue)
+	var issuerAllowedAuths []string
+	if value, ok := c.Get(sdkaccess.AllowedAuthsContextKey); ok {
+		issuerAllowedAuths, _ = value.([]string)
+	}
+	token, authorization, expiresAt, errCreate := h.clientSecrets.create(upstreamSession, lifetime, issuerPrincipalValue, issuerProviderValue, issuerAllowedAuths)
 	if errCreate != nil {
 		if errors.Is(errCreate, errClientSecretCapacity) {
 			c.Header("Retry-After", "1")

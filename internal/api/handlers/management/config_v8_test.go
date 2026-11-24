@@ -422,7 +422,7 @@ func TestConfigV8DeleteLastField(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !tc.check(cfg) || cfg.Port != 8317 || len(cfg.APIKeys) != 1 || cfg.APIKeys[0] != "client" {
+			if !tc.check(cfg) || cfg.Port != 8317 || len(cfg.APIKeys) != 1 || cfg.APIKeys[0].Key != "client" {
 				t.Fatal("delete did not restore defaults or changed unrelated settings")
 			}
 			if !reflect.DeepEqual(h.cfg.OAuthOnlyFields, cfg.OAuthOnlyFields) {

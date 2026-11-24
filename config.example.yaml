@@ -142,6 +142,24 @@ access:
     - "your-api-key-1"
     - "your-api-key-2"
     - "your-api-key-3"
+    # A key can be bound to specific credentials with the mapping form. Requests that
+    # authenticate with a bound key are only ever served by the listed credentials
+    # (selection, retries, failover, session affinity and websocket continuity all stay
+    # inside the set), and /v1/models, /v1beta/models and the Claude models list only show
+    # the models those credentials serve. Plain-string keys stay unrestricted.
+    #
+    # Each `auths` item is a credential ID or an auth file name, matched exactly (case
+    # sensitive, no basename matching). Credentials declared in this file (for example
+    # codex-api-key entries) have generated IDs and are matched by ID only. An empty
+    # `auths` list is rejected, and when a key appears twice the first entry wins.
+    # A bound key that matches no credential gets no models and no successful requests.
+    # Bound keys are not supported in Home mode: they are refused there instead of
+    # silently ignoring the binding.
+    #
+    # - key: "personal-key"
+    #   auths: ["codex-personal.json", "claude-personal.json"]
+    # - key: "work-key"
+    #   auths: ["codex-work.json"]
 
 # Optional credential concurrency and observation contracts.
 

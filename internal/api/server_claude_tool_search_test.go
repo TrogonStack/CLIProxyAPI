@@ -20,7 +20,7 @@ func setClaudeToolSearchForTest(t *testing.T, enabled bool) {
 // startup and on every config reload.
 func TestServerAppliesClaudeToolSearchSwitch(t *testing.T) {
 	setClaudeToolSearchForTest(t, false)
-	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}}}
+	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")}}
 	cfg.Claude.ToolSearch = true
 	server := newTestServerWithConfig(t, cfg)
 	if !responsesclaude.ClientToolSearchEnabled() {

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 )
 
 // HomeModelsLoader loads scoped models when Home mode is active.
@@ -208,6 +209,9 @@ func (h *Handler) HandleModels(c *gin.Context) {
 		}
 	} else {
 		inputs = ModelInputsFromGlobalRegistry(registry.GetGlobalRegistry())
+		if refs := sdkaccess.AllowedAuthsFromGin(c); len(refs) > 0 {
+			inputs = filterModelInputsForAllowedAuths(inputs, h, refs)
+		}
 	}
 
 	payload := BuildModelsResponse(inputs)
@@ -1229,4 +1233,24 @@ func minPositive(a, b int) int {
 	default:
 		return a
 	}
+}
+
+// filterModelInputsForAllowedAuths keeps only models served by the credentials a bound
+// client key may use.
+func filterModelInputsForAllowedAuths(inputs []ModelInput, h *Handler, refs []string) []ModelInput {
+	if h == nil || h.authManager == nil {
+		return nil
+	}
+	allowed := registry.GetGlobalRegistry().GetAvailableModelInfosForClients(h.authManager.AllowedAuthIDs(refs))
+	ids := make(map[string]struct{}, len(allowed))
+	for _, info := range allowed {
+		ids[info.ID] = struct{}{}
+	}
+	filtered := make([]ModelInput, 0, len(inputs))
+	for _, input := range inputs {
+		if _, ok := ids[input.ID]; ok {
+			filtered = append(filtered, input)
+		}
+	}
+	return filtered
 }

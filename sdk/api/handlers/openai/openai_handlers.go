@@ -52,6 +52,11 @@ func (h *OpenAIAPIHandler) HandlerType() string {
 	return OpenAI
 }
 
+// ModelsForRequest returns the models visible to the request's client key.
+func (h *OpenAIAPIHandler) ModelsForRequest(c *gin.Context) []map[string]any {
+	return h.AvailableModelsForRequest(c, "openai")
+}
+
 // Models returns the OpenAI-compatible model metadata supported by this handler.
 func (h *OpenAIAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
@@ -65,7 +70,7 @@ func (h *OpenAIAPIHandler) Models() []map[string]any {
 func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	if _, ok := c.Request.URL.Query()["client_version"]; ok {
 		clientVersion := c.Query("client_version")
-		body, errMarshal := codexmodels.MarshalCompact(h.codexClientModelsResponse(clientVersion))
+		body, errMarshal := codexmodels.MarshalCompact(h.codexClientModelsResponseFor(h.ModelsForRequest(c), clientVersion))
 		if errMarshal != nil {
 			c.JSON(http.StatusInternalServerError, handlers.ErrorResponse{
 				Error: handlers.ErrorDetail{
@@ -80,7 +85,7 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	}
 
 	// Get all available models
-	allModels := h.Models()
+	allModels := h.ModelsForRequest(c)
 
 	// Filter to only include the 4 required fields: id, object, created, owned_by
 	filteredModels := make([]map[string]any, len(allModels))

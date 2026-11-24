@@ -440,7 +440,7 @@ func TestMuseCodeModelsSupportsHomeModeOAuthSettingsHotReloadAndPluginIntercepto
 
 	// 1. Real server.engine rejects Home request with 503 when Home heartbeat is absent, without leaking local models.
 	cfgNoHome := &proxyconfig.Config{
-		SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}},
+		SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")},
 		Home:      proxyconfig.HomeConfig{Enabled: true},
 	}
 	serverNoHome := newTestServerWithConfig(t, cfgNoHome)
@@ -527,7 +527,7 @@ func TestMuseCodeModelsSupportsHomeModeOAuthSettingsHotReloadAndPluginIntercepto
 	home.SetCurrent(homeClient)
 
 	cfgWithHome := &proxyconfig.Config{
-		SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}},
+		SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")},
 		Home:      proxyconfig.HomeConfig{Enabled: true},
 		OAuthSettings: map[string][]proxyconfig.OAuthModelSetting{
 			"codex": {
@@ -742,7 +742,7 @@ func TestMuseCodeRoutesEnforceAuthSafeModeAndDisallowedPaths(t *testing.T) {
 	// 2. Example API key safe mode blocks /muse-code/models with 403.
 	safeCfg := &proxyconfig.Config{
 		SDKConfig: sdkconfig.SDKConfig{
-			APIKeys: []string{"your-api-key-1"},
+			APIKeys: proxyconfig.APIKeyEntries("your-api-key-1"),
 		},
 	}
 	safeServer := newTestServerWithConfig(t, safeCfg, WithExampleAPIKeySafeMode())

@@ -30,17 +30,19 @@ func Register(cfg *sdkconfig.SDKConfig) {
 
 type provider struct {
 	name string
-	keys map[string]struct{}
+	// keys maps each accepted key to the credentials it is bound to. A nil
+	// value means the key is unrestricted.
+	keys map[string][]string
 }
 
-func newProvider(name string, keys []string) *provider {
+func newProvider(name string, keys []sdkconfig.APIKeyEntry) *provider {
 	providerName := strings.TrimSpace(name)
 	if providerName == "" {
 		providerName = sdkaccess.DefaultAccessProviderName
 	}
-	keySet := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		keySet[key] = struct{}{}
+	keySet := make(map[string][]string, len(keys))
+	for _, entry := range keys {
+		keySet[entry.Key] = entry.Auths
 	}
 	return &provider{name: providerName, keys: keySet}
 }
@@ -89,10 +91,11 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 		if candidate.value == "" {
 			continue
 		}
-		if _, ok := p.keys[candidate.value]; ok {
+		if auths, ok := p.keys[candidate.value]; ok {
 			return &sdkaccess.Result{
-				Provider:  p.Identifier(),
-				Principal: candidate.value,
+				Provider:     p.Identifier(),
+				Principal:    candidate.value,
+				AllowedAuths: append([]string(nil), auths...),
 				Metadata: map[string]string{
 					"source": candidate.source,
 				},
@@ -117,14 +120,16 @@ func extractBearerToken(header string) string {
 	return strings.TrimSpace(parts[1])
 }
 
-func normalizeKeys(keys []string) []string {
+// normalizeKeys trims keys, drops blanks, and keeps the first entry of any
+// duplicated key together with its credential binding.
+func normalizeKeys(keys []sdkconfig.APIKeyEntry) []sdkconfig.APIKeyEntry {
 	if len(keys) == 0 {
 		return nil
 	}
-	normalized := make([]string, 0, len(keys))
+	normalized := make([]sdkconfig.APIKeyEntry, 0, len(keys))
 	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		trimmedKey := strings.TrimSpace(key)
+	for _, entry := range keys {
+		trimmedKey := strings.TrimSpace(entry.Key)
 		if trimmedKey == "" {
 			continue
 		}
@@ -132,7 +137,16 @@ func normalizeKeys(keys []string) []string {
 			continue
 		}
 		seen[trimmedKey] = struct{}{}
-		normalized = append(normalized, trimmedKey)
+		auths := make([]string, 0, len(entry.Auths))
+		for _, ref := range entry.Auths {
+			if trimmedRef := strings.TrimSpace(ref); trimmedRef != "" {
+				auths = append(auths, trimmedRef)
+			}
+		}
+		if len(auths) == 0 {
+			auths = nil
+		}
+		normalized = append(normalized, sdkconfig.APIKeyEntry{Key: trimmedKey, Auths: auths})
 	}
 	if len(normalized) == 0 {
 		return nil
