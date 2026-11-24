@@ -120,36 +120,72 @@ func extractBearerToken(header string) string {
 	return strings.TrimSpace(parts[1])
 }
 
-// normalizeKeys trims keys, drops blanks, and keeps the first entry of any
-// duplicated key together with its credential binding.
+// blockedAuthRef is a restriction item that matches no credential. A bound key
+// whose usable refs are all gone keeps this single item so it stays bound to
+// nothing instead of becoming unrestricted.
+const blockedAuthRef = " "
+
+// normalizeKeys trims keys and drops blanks. A duplicated key is rejected at
+// config load; if one still reaches this point it fails closed: the copies are
+// intersected, and any bound copy outweighs an unrestricted one. A bound entry
+// is never turned into an unrestricted one.
 func normalizeKeys(keys []sdkconfig.APIKeyEntry) []sdkconfig.APIKeyEntry {
 	if len(keys) == 0 {
 		return nil
 	}
 	normalized := make([]sdkconfig.APIKeyEntry, 0, len(keys))
-	seen := make(map[string]struct{}, len(keys))
+	index := make(map[string]int, len(keys))
 	for _, entry := range keys {
 		trimmedKey := strings.TrimSpace(entry.Key)
 		if trimmedKey == "" {
 			continue
 		}
-		if _, exists := seen[trimmedKey]; exists {
-			continue
-		}
-		seen[trimmedKey] = struct{}{}
-		auths := make([]string, 0, len(entry.Auths))
-		for _, ref := range entry.Auths {
-			if trimmedRef := strings.TrimSpace(ref); trimmedRef != "" {
-				auths = append(auths, trimmedRef)
+		var auths []string
+		if entry.Auths != nil {
+			auths = make([]string, 0, len(entry.Auths))
+			for _, ref := range entry.Auths {
+				if trimmedRef := strings.TrimSpace(ref); trimmedRef != "" {
+					auths = append(auths, trimmedRef)
+				}
+			}
+			if len(auths) == 0 {
+				auths = []string{blockedAuthRef}
 			}
 		}
-		if len(auths) == 0 {
-			auths = nil
+		if at, exists := index[trimmedKey]; exists {
+			normalized[at].Auths = intersectAuths(normalized[at].Auths, auths)
+			continue
 		}
+		index[trimmedKey] = len(normalized)
 		normalized = append(normalized, sdkconfig.APIKeyEntry{Key: trimmedKey, Auths: auths})
 	}
 	if len(normalized) == 0 {
 		return nil
 	}
 	return normalized
+}
+
+// intersectAuths combines the restrictions of two copies of one key. A nil list
+// is unrestricted, so the other list wins; two lists keep only the shared refs.
+func intersectAuths(a, b []string) []string {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	in := make(map[string]struct{}, len(b))
+	for _, ref := range b {
+		in[ref] = struct{}{}
+	}
+	var out []string
+	for _, ref := range a {
+		if _, ok := in[ref]; ok && ref != blockedAuthRef {
+			out = append(out, ref)
+		}
+	}
+	if len(out) == 0 {
+		return []string{blockedAuthRef}
+	}
+	return out
 }

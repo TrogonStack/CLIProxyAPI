@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
@@ -41,13 +42,36 @@ func TestProviderReturnsAllowedAuthsForBoundKey(t *testing.T) {
 	}
 }
 
-func TestProviderFirstDuplicateKeyWins(t *testing.T) {
-	p := newProvider("", normalizeKeys([]sdkconfig.APIKeyEntry{
-		{Key: "dup", Auths: []string{"a.json"}},
-		{Key: "dup"},
-	}))
-	if auths, ok := authenticate(t, p, "dup"); !ok || !reflect.DeepEqual(auths, []string{"a.json"}) {
-		t.Fatalf("auths=%v ok=%v, want the first (bound) entry", auths, ok)
+func TestProviderDuplicateKeyFailsClosed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		keys []sdkconfig.APIKeyEntry
+		want []string
+	}{
+		"plain before bound": {[]sdkconfig.APIKeyEntry{{Key: "dup"}, {Key: "dup", Auths: []string{"a.json"}}}, []string{"a.json"}},
+		"bound before plain": {[]sdkconfig.APIKeyEntry{{Key: "dup", Auths: []string{"a.json"}}, {Key: "dup"}}, []string{"a.json"}},
+		"two bound overlap":  {[]sdkconfig.APIKeyEntry{{Key: "dup", Auths: []string{"a.json", "b.json"}}, {Key: "dup", Auths: []string{"b.json", "c.json"}}}, []string{"b.json"}},
+		"two bound disjoint": {[]sdkconfig.APIKeyEntry{{Key: "dup", Auths: []string{"a.json"}}, {Key: "dup", Auths: []string{"b.json"}}}, []string{blockedAuthRef}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newProvider("", normalizeKeys(tc.keys))
+			auths, ok := authenticate(t, p, "dup")
+			if !ok || !reflect.DeepEqual(auths, tc.want) {
+				t.Fatalf("auths=%v ok=%v, want %v", auths, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestProviderBoundEntryWithOnlyBlankRefsStaysBound(t *testing.T) {
+	p := newProvider("", normalizeKeys([]sdkconfig.APIKeyEntry{{Key: "k", Auths: []string{"", "  "}}}))
+	auths, ok := authenticate(t, p, "k")
+	if !ok || len(auths) == 0 {
+		t.Fatalf("auths=%v ok=%v, want a non-empty restriction that matches nothing", auths, ok)
+	}
+	for _, ref := range auths {
+		if strings.TrimSpace(ref) != "" {
+			t.Fatalf("restriction %v must not name any credential", auths)
+		}
 	}
 }
 

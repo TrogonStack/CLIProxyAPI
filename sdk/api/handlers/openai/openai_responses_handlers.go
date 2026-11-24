@@ -920,6 +920,7 @@ func (h *OpenAIResponsesAPIHandler) prepareCodexMultiAgentV2ToolsDoc(c *gin.Cont
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	h.PublishAllowedAuthIDs(c)
 	requestCtx = context.WithValue(requestCtx, "gin", c)
 
 	var requestHeaders http.Header

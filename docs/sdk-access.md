@@ -84,7 +84,7 @@ The blank identifier import ensures `init` runs so `sdkaccess.RegisterProvider` 
 
 ### Restricting a principal to credentials
 
-`Result.AllowedAuths` optionally lists credential IDs or auth file names. When it is non-empty, requests authenticated by that result are only served by the listed credentials, and model listings only show the models they serve. The built-in `config-api-key` provider fills it from `access.api-keys` entries written as `{key, auths}`. Leave it empty for an unrestricted principal.
+`Result.AllowedAuths` optionally lists credential IDs or auth file names. When it is non-empty, requests authenticated by that result are only served by the listed credentials, and model listings only show the models they serve. The built-in `config-api-key` provider fills it from `access.api-keys` entries written as `{key, auths}`. Leave it empty for an unrestricted principal. A non-empty list that names no usable credential (for example only blank items) stays restricted and serves nothing.
 
 ### Metadata and auditing
 

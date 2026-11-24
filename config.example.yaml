@@ -151,7 +151,10 @@ access:
     # Each `auths` item is a credential ID or an auth file name, matched exactly (case
     # sensitive, no basename matching). Credentials declared in this file (for example
     # codex-api-key entries) have generated IDs and are matched by ID only. An empty
-    # `auths` list is rejected, and when a key appears twice the first entry wins.
+    # `auths` list is rejected, unknown fields (anything but `key` and `auths`) are rejected,
+    # and a key listed twice is a config error, so a binding is never dropped silently.
+    # The spawn_agent model list and /v1/analytics/codex/turn-costs are scoped to the
+    # key's credentials too.
     # A bound key that matches no credential gets no models and no successful requests.
     # Bound keys are not supported in Home mode: they are refused there instead of
     # silently ignoring the binding.

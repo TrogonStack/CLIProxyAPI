@@ -124,3 +124,90 @@ func TestAPIKeyBindingSurvivesLoadAndSaveRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIKeyEntryRejectsUnknownFieldsInYAMLAndJSON(t *testing.T) {
+	for name, data := range map[string]string{
+		"auth typo":       "{\"key\":\"k\",\"auth\":[\"a.json\"]}",
+		"auths suffix":    "{\"key\":\"k\",\"auths_\":[\"a.json\"]}",
+		"extra beside ok": "{\"key\":\"k\",\"auths\":[\"a.json\"],\"note\":\"x\"}",
+		"wrong case":      "{\"Key\":\"k\"}",
+	} {
+		t.Run("json "+name, func(t *testing.T) {
+			var e APIKeyEntry
+			if err := json.Unmarshal([]byte(data), &e); err == nil {
+				t.Fatalf("accepted %s as %#v", data, e)
+			}
+		})
+	}
+	for name, data := range map[string]string{
+		"auth typo":    "api-keys:\n  - key: k\n    auth: [a.json]\n",
+		"auths suffix": "api-keys:\n  - key: k\n    auths_: [a.json]\n",
+		"extra":        "api-keys:\n  - key: k\n    auths: [a.json]\n    note: x\n",
+	} {
+		t.Run("yaml "+name, func(t *testing.T) {
+			var cfg SDKConfig
+			err := yaml.Unmarshal([]byte(data), &cfg)
+			if err == nil || !strings.Contains(err.Error(), "unknown field") {
+				t.Fatalf("err = %v, want an unknown field error", err)
+			}
+		})
+	}
+}
+
+func TestAPIKeyEntryJSONRejectsEmptyOrBlankAuths(t *testing.T) {
+	for name, data := range map[string]string{
+		"empty list": `{"key":"k","auths":[]}`,
+		"null":       `{"key":"k","auths":null}`,
+		"blank item": `{"key":"k","auths":["  "]}`,
+		"mixed":      `{"key":"k","auths":["a.json",""]}`,
+		"blank key":  `{"key":" ","auths":["a.json"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var e APIKeyEntry
+			if err := json.Unmarshal([]byte(data), &e); err == nil {
+				t.Fatalf("accepted %s as %#v", data, e)
+			}
+		})
+	}
+	var ok APIKeyEntry
+	if err := json.Unmarshal([]byte(`{"key":"k"}`), &ok); err != nil || ok.Bound() {
+		t.Fatalf("mapping without auths: %#v, %v", ok, err)
+	}
+}
+
+func TestValidateAPIKeysRejectsDuplicates(t *testing.T) {
+	for name, keys := range map[string][]APIKeyEntry{
+		"plain then bound": {{Key: "k"}, {Key: "k", Auths: []string{"a.json"}}},
+		"bound then plain": {{Key: "k", Auths: []string{"a.json"}}, {Key: "k"}},
+		"padded copy":      {{Key: "k"}, {Key: " k "}},
+	} {
+		cfg := SDKConfig{APIKeys: keys}
+		if err := cfg.ValidateAPIKeys(); err == nil {
+			t.Fatalf("%s: duplicate accepted", name)
+		}
+	}
+	ok := SDKConfig{APIKeys: []APIKeyEntry{{Key: "a"}, {Key: "b", Auths: []string{"x.json"}}}}
+	if err := ok.ValidateAPIKeys(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadConfigRejectsDuplicateAPIKeys(t *testing.T) {
+	for name, data := range map[string]string{
+		"legacy": "api-keys:\n  - k\n  - key: k\n    auths: [a.json]\n",
+		"v8":     "access:\n  api-keys:\n    - key: k\n      auths: [a.json]\n    - k\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadConfig(path); err == nil {
+				t.Fatal("duplicate api-keys loaded")
+			}
+			if _, err := ParseConfigBytes([]byte(data)); err == nil {
+				t.Fatal("duplicate api-keys parsed")
+			}
+		})
+	}
+}

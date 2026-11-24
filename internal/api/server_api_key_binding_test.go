@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/turncost"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
@@ -69,5 +72,65 @@ func TestServerModelListIsFilteredPerBoundKey(t *testing.T) {
 	}
 	if got := list("dangling-key"); len(got) != 0 {
 		t.Fatalf("a key bound to a missing credential must list nothing, got %v", got)
+	}
+}
+
+func TestTurnCostsEndpointIsScopedToBoundKey(t *testing.T) {
+	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: []proxyconfig.APIKeyEntry{
+		{Key: "plain-key"},
+		{Key: "personal-key", Auths: []string{"turn-personal.json"}},
+		{Key: "dangling-key", Auths: []string{"turn-missing.json"}},
+	}}}
+	cfg.CodexTurnCosts.Enabled = true
+	cfg.CodexTurnCosts.UpstreamEstimates = false
+	server := newTestServerWithConfig(t, cfg)
+	for id, file := range map[string]string{"turn-personal-id": "turn-personal.json", "turn-work-id": "turn-work.json"} {
+		if _, err := server.handlers.AuthManager.Register(auth.WithSkipPersist(context.Background()), &auth.Auth{
+			ID: id, FileName: file, Provider: "codex", Status: auth.StatusActive,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := func(authID, turnID, responseID string) {
+		turncost.Default().HandleUsage(context.Background(), coreusage.Record{
+			Provider: "codex", Model: "gpt-5.1-codex", TurnID: turnID, AuthID: authID,
+			Detail: coreusage.Detail{ResponseID: responseID, InputTokens: 1000},
+		})
+	}
+	record("turn-personal-id", "scoped-turn-personal", "r1")
+	record("turn-work-id", "scoped-turn-work", "r2")
+
+	status := func(key string) map[string]string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/v1/analytics/codex/turn-costs", strings.NewReader(`{"turn_ids":["scoped-turn-personal","scoped-turn-work"]}`))
+		req.Header.Set("Authorization", "Bearer "+key)
+		rr := httptest.NewRecorder()
+		server.engine.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d body=%s", key, rr.Code, rr.Body.String())
+		}
+		var body struct {
+			Turns []struct {
+				TurnID string `json:"turn_id"`
+				Status string `json:"status"`
+			} `json:"turns"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, turn := range body.Turns {
+			out[turn.TurnID] = turn.Status
+		}
+		return out
+	}
+	if got := status("plain-key"); got["scoped-turn-personal"] != "priced" || got["scoped-turn-work"] != "priced" {
+		t.Fatalf("plain key = %v, want both priced", got)
+	}
+	if got := status("personal-key"); got["scoped-turn-personal"] != "priced" || got["scoped-turn-work"] != "pending" {
+		t.Fatalf("personal key = %v, want only its own turn priced", got)
+	}
+	if got := status("dangling-key"); got["scoped-turn-personal"] != "pending" || got["scoped-turn-work"] != "pending" {
+		t.Fatalf("dangling key = %v, want nothing priced", got)
 	}
 }

@@ -139,6 +139,29 @@ func (s *Service) HandleUsage(_ context.Context, record coreusage.Record) {
 // unknown, expired, or has a response without a known model price is reported as pending,
 // which Codex retries a few times before it stops asking about that turn.
 func (s *Service) Query(ctx context.Context, turnIDs []string) []TurnCost {
+	return s.QueryScoped(ctx, turnIDs, nil)
+}
+
+// Scope decides whether a caller may see a recorded turn. A turn it rejects is reported
+// as pending, exactly like an unknown one, and is never priced upstream.
+type Scope func(Turn) bool
+
+// AuthIDScope admits only turns served by a single credential that is in the allowed set.
+// The store keeps one credential per turn and a MixedAuth flag, so a turn served by
+// several credentials, or by none that was recorded, cannot be proven to belong to the
+// caller and is rejected.
+func AuthIDScope(allowed map[string]struct{}) Scope {
+	return func(turn Turn) bool {
+		if turn.MixedAuth || turn.AuthID == "" {
+			return false
+		}
+		_, ok := allowed[turn.AuthID]
+		return ok
+	}
+}
+
+// QueryScoped is Query limited to the turns the scope admits. A nil scope admits all.
+func (s *Service) QueryScoped(ctx context.Context, turnIDs []string, scope Scope) []TurnCost {
 	prices := s.prices.Load()
 	var upstream map[string]TurnCost
 	var source AuthSource
@@ -147,7 +170,7 @@ func (s *Service) Query(ctx context.Context, turnIDs []string) []TurnCost {
 	}
 	turns := make(map[string]Turn, len(turnIDs))
 	for _, id := range turnIDs {
-		if turn, ok := s.store.Get(id); ok {
+		if turn, ok := s.store.Get(id); ok && (scope == nil || scope(turn)) {
 			turns[id] = turn
 		}
 	}

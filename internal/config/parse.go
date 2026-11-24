@@ -105,6 +105,9 @@ func validateStartupConfig(data []byte, optional bool) (*startupConfig, error) {
 	if errValidate := cfg.ValidateCredentialWeights(); errValidate != nil {
 		return nil, errValidate
 	}
+	if errValidate := cfg.ValidateAPIKeys(); errValidate != nil {
+		return nil, errValidate
+	}
 	if errValidate := cfg.Codex.LiveMediaRelay.Validate(); errValidate != nil {
 		return nil, errValidate
 	}

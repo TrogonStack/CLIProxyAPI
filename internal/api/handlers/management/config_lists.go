@@ -157,20 +157,92 @@ func (h *Handler) deleteFromStringList(c *gin.Context, targetOf func() *[]string
 // api-keys
 func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
 func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.SetAPIKeyStrings(v)
-	}, nil)
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	var arr []string
+	if err = json.Unmarshal(data, &arr); err != nil {
+		var obj struct {
+			Items []string `json:"items"`
+		}
+		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+			c.JSON(400, gin.H{"error": "invalid body"})
+			return
+		}
+		arr = obj.Items
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var next config.SDKConfig
+	next.APIKeys = append([]config.APIKeyEntry(nil), h.cfg.APIKeys...)
+	next.SetAPIKeyStrings(arr)
+	if rejectInvalidAPIKeys(c, &next) {
+		return
+	}
+	h.cfg.APIKeys = next.APIKeys
+	h.persistLocked(c)
 }
 
-// PatchAPIKeys and DeleteAPIKeys edit the plain key strings and keep the
-// credential binding of every key that survives the edit.
+// PatchAPIKeys renames or appends one key. A rename keeps the credential binding of
+// the key it renames, so editing a key never widens it to every credential.
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	keys := h.cfg.APIKeyStrings()
-	h.patchStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
+	var body struct {
+		Old   *string `json:"old"`
+		New   *string `json:"new"`
+		Index *int    `json:"index"`
+		Value *string `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	entries := append([]config.APIKeyEntry(nil), h.cfg.APIKeys...)
+	switch {
+	case body.Index != nil && body.Value != nil && *body.Index >= 0 && *body.Index < len(entries):
+		entries[*body.Index].Key = *body.Value
+	case body.Old != nil && body.New != nil:
+		renamed := false
+		for i := range entries {
+			if entries[i].Key == *body.Old {
+				entries[i].Key = *body.New
+				renamed = true
+				break
+			}
+		}
+		if !renamed {
+			entries = append(entries, config.APIKeyEntry{Key: *body.New})
+		}
+	default:
+		c.JSON(400, gin.H{"error": "missing fields"})
+		return
+	}
+	var next config.SDKConfig
+	next.APIKeys = entries
+	if rejectInvalidAPIKeys(c, &next) {
+		return
+	}
+	h.cfg.APIKeys = entries
+	h.persistLocked(c)
 }
+
+// DeleteAPIKeys removes one key and keeps the binding of every key that stays.
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
 	keys := h.cfg.APIKeyStrings()
 	h.deleteFromStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
+}
+
+// rejectInvalidAPIKeys answers 400 when the proposed key list is not a valid config,
+// for example because it lists a key twice.
+func rejectInvalidAPIKeys(c *gin.Context, proposed *config.SDKConfig) bool {
+	if err := proposed.ValidateAPIKeys(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return true
+	}
+	return false
 }
 
 // gemini-api-key: []GeminiKey

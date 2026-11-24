@@ -93,7 +93,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		v1.POST("/alpha/search", s.codexAlphaSearch)
-		v1.POST("/analytics/codex/turn-costs", turncost.Default().Handler)
+		v1.POST("/analytics/codex/turn-costs", turncost.Default().HandlerScoped(s.turnCostScope))
 		v1.POST("/live", s.codexLiveHandler.Handle)
 		v1.GET("/live/:call_id", s.codexLiveHandler.HandleSideband)
 	}
@@ -1632,4 +1632,18 @@ func homeModelInt64Value(model map[string]any, keys ...string) int64 {
 		}
 	}
 	return 0
+}
+
+// turnCostScope limits the turn-cost endpoint to turns served by the credentials a bound
+// client key may use. Turns outside the binding read as pending, and Home mode, which
+// cannot enforce a binding, exposes none of them.
+func (s *Server) turnCostScope(c *gin.Context) turncost.Scope {
+	refs := sdkaccess.AllowedAuthsFromGin(c)
+	if len(refs) == 0 {
+		return nil
+	}
+	if s == nil || s.handlers == nil || s.handlers.AuthManager == nil || s.handlers.AuthManager.HomeEnabled() {
+		return turncost.AuthIDScope(nil)
+	}
+	return turncost.AuthIDScope(s.handlers.AuthManager.AllowedAuthIDs(refs))
 }

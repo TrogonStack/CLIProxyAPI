@@ -773,6 +773,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			}
 		}()
 	}
+	h.PublishAllowedAuthIDs(c)
 	newCtx = context.WithValue(newCtx, "gin", c)
 	newCtx = coreusage.CaptureIdentity(newCtx)
 	newCtx = coreauth.WithCodexClientRequest(newCtx, coreauth.IsCodexClientRequest(newCtx))

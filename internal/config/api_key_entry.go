@@ -92,17 +92,34 @@ func (e *APIKeyEntry) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (e APIKeyEntry) validate(content []*yaml.Node, line int) error {
-	if strings.TrimSpace(e.Key) == "" {
-		return fmt.Errorf("line %d: api-keys entry requires a non-empty key", line)
-	}
+	authsPresent := false
 	for i := 0; i+1 < len(content); i += 2 {
-		if content[i].Value == "auths" && len(e.Auths) == 0 {
-			return fmt.Errorf("line %d: api-keys entry %q has an empty auths list; remove auths to leave the key unrestricted", content[i].Line, "key")
+		switch content[i].Value {
+		case "key":
+		case "auths":
+			authsPresent = true
+		default:
+			return fmt.Errorf("line %d: api-keys entry has unknown field %q; only key and auths are allowed", content[i].Line, content[i].Value)
 		}
+	}
+	if err := e.check(authsPresent); err != nil {
+		return fmt.Errorf("line %d: %w", line, err)
+	}
+	return nil
+}
+
+// check rejects an entry that would silently widen access: a blank key, or an
+// auths list that is present but empty or holds a blank item.
+func (e APIKeyEntry) check(authsPresent bool) error {
+	if strings.TrimSpace(e.Key) == "" {
+		return fmt.Errorf("api-keys entry requires a non-empty key")
+	}
+	if authsPresent && len(e.Auths) == 0 {
+		return fmt.Errorf("api-keys entry has an empty auths list; remove auths to leave the key unrestricted")
 	}
 	for _, ref := range e.Auths {
 		if strings.TrimSpace(ref) == "" {
-			return fmt.Errorf("line %d: api-keys entry has an empty auths item", line)
+			return fmt.Errorf("api-keys entry has an empty auths item")
 		}
 	}
 	return nil
@@ -128,15 +145,26 @@ func (e *APIKeyEntry) UnmarshalJSON(data []byte) error {
 		*e = APIKeyEntry{Key: key}
 		return nil
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name := range fields {
+		if name != "key" && name != "auths" {
+			return fmt.Errorf("api-keys entry has unknown field %q; only key and auths are allowed", name)
+		}
+	}
 	type plain APIKeyEntry
 	var decoded plain
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	if strings.TrimSpace(decoded.Key) == "" {
-		return fmt.Errorf("api-keys entry requires a non-empty key")
+	_, authsPresent := fields["auths"]
+	entry := APIKeyEntry(decoded)
+	if err := entry.check(authsPresent); err != nil {
+		return err
 	}
-	*e = APIKeyEntry(decoded)
+	*e = entry
 	return nil
 }
 
@@ -147,4 +175,25 @@ func (e APIKeyEntry) MarshalJSON() ([]byte, error) {
 	}
 	type plain APIKeyEntry
 	return json.Marshal(plain(e))
+}
+
+// ValidateAPIKeys rejects client API keys that cannot be served safely. A key
+// listed twice is ambiguous because the copies may carry different credential
+// bindings, so it is a configuration error instead of "first one wins".
+func (c *SDKConfig) ValidateAPIKeys() error {
+	if c == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(c.APIKeys))
+	for index, entry := range c.APIKeys {
+		trimmed := strings.TrimSpace(entry.Key)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			return fmt.Errorf("api-keys[%d] duplicates an earlier api-keys entry; list each key once", index)
+		}
+		seen[trimmed] = struct{}{}
+	}
+	return nil
 }

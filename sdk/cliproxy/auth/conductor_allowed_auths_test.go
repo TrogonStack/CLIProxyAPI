@@ -262,3 +262,58 @@ func TestHomeModeRefusesBoundKeys(t *testing.T) {
 		t.Fatalf("a credential was used: %v", calls)
 	}
 }
+
+// A session binding made by any key, bound or not, is only a preference: a request from
+// another key bound to a different set must never follow it out of that set.
+func TestAllowedAuthsSessionAffinityBindingFromAnyKeyNeverLeaksIntoABoundSet(t *testing.T) {
+	creators := map[string][]string{
+		"unrestricted key":      nil,
+		"key bound elsewhere":   {"cred-c.json"},
+		"key bound to a subset": {"cred-a.json", "cred-c.json"},
+	}
+	for name, creatorAllowed := range creators {
+		for _, mode := range []string{"execute", "count", "stream"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				sticky := NewSessionAffinitySelector(&FillFirstSelector{})
+				t.Cleanup(sticky.Stop)
+				f := newAllowedAuthsFixture(t, sticky)
+				headers := http.Header{"Session_id": {"shared-session"}}
+				run := func(allowed []string) (string, error) {
+					opts := cliproxyexecutor.Options{Headers: headers}
+					if allowed != nil {
+						opts.Metadata = map[string]any{cliproxyexecutor.AllowedAuthsMetadataKey: allowed}
+					}
+					payload, err := invokeAfterAuthMode(f.manager, f.provider, f.model, mode, opts)
+					if err != nil {
+						return "", err
+					}
+					return string(payload[len(payload)-6:]), nil
+				}
+				owner, err := run(creatorAllowed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if owner == "cred-b" {
+					t.Fatalf("creator %s was served by cred-b, the fixture needs the owner outside {cred-b}", name)
+				}
+				for range 3 {
+					got, err := run([]string{"cred-b.json"})
+					if err != nil || got != "cred-b" {
+						t.Fatalf("bound request served by %q (err=%v), want cred-b", got, err)
+					}
+				}
+				// The binding the bound key made must not drag the creator's own traffic out
+				// of the creator's set either.
+				if creatorAllowed != nil {
+					got, err := run(creatorAllowed)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got == "cred-b" {
+						t.Fatalf("creator restricted to %v was served by cred-b", creatorAllowed)
+					}
+				}
+			})
+		}
+	}
+}

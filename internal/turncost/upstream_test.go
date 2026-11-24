@@ -353,3 +353,44 @@ func itoa(v int) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestQueryScopedHidesTurnsOutsideTheAllowedCredentials(t *testing.T) {
+	u := newFakeUpstream(t, func(call upstreamCall, w http.ResponseWriter) {
+		writeJSON(w, `{"threads":[{"thread_id":"th-a","turns":[{"turn_id":"turn-a","model":"gpt-5.6","estimated_usage_usd_micros":1000,"settled_response_ids":["ra"]}]},{"thread_id":"th-b","turns":[{"turn_id":"turn-b","model":"gpt-5.6","estimated_usage_usd_micros":2000,"settled_response_ids":["rb"]}]}]}`)
+	})
+	s := upstreamService(t, u, codexAuth("auth-a", "tok-a", "acct-a"), codexAuth("auth-b", "tok-b", "acct-b"))
+	s.HandleUsage(context.Background(), record("auth-a", "th-a", "turn-a", "ra", 1_000_000))
+	s.HandleUsage(context.Background(), record("auth-b", "th-b", "turn-b", "rb", 1_000_000))
+	// A turn that auth-a and auth-b both served cannot be attributed to auth-a alone.
+	s.HandleUsage(context.Background(), record("auth-a", "th-m", "turn-mixed", "rm1", 1_000_000))
+	s.HandleUsage(context.Background(), record("auth-b", "th-m", "turn-mixed", "rm2", 1_000_000))
+	// A turn with no recorded credential cannot be attributed to the caller.
+	s.HandleUsage(context.Background(), record("", "th-n", "turn-anon", "rn", 1_000_000))
+
+	scope := AuthIDScope(map[string]struct{}{"auth-a": {}})
+	got := s.QueryScoped(context.Background(), []string{"turn-a", "turn-b", "turn-mixed", "turn-anon"}, scope)
+	if got[0].Status != statusPriced {
+		t.Fatalf("turn-a = %+v, want priced", got[0])
+	}
+	for _, c := range got[1:] {
+		if c.Status != statusPending || c.TotalUSD != "" {
+			t.Fatalf("%s = %+v, want pending without any cost", c.TurnID, c)
+		}
+	}
+	for _, call := range u.recorded() {
+		if call.token != "Bearer tok-a" {
+			t.Fatalf("upstream call used %q, only the allowed credential may be used", call.token)
+		}
+		for _, thread := range call.body.Threads {
+			if thread.ThreadID != "th-a" {
+				t.Fatalf("upstream asked about thread %q outside the scope", thread.ThreadID)
+			}
+		}
+	}
+	if got := s.QueryScoped(context.Background(), []string{"turn-a"}, AuthIDScope(nil)); got[0].Status != statusPending {
+		t.Fatalf("empty scope = %+v, want pending", got[0])
+	}
+	if got := s.Query(context.Background(), []string{"turn-b"}); got[0].Status != statusPriced {
+		t.Fatalf("unscoped Query = %+v, want priced", got[0])
+	}
+}

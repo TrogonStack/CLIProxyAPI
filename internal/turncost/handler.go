@@ -22,7 +22,21 @@ type queryResponse struct {
 
 // Handler serves POST /v1/analytics/codex/turn-costs. When the feature is disabled it
 // answers 404, which makes Codex stop polling.
-func (s *Service) Handler(c *gin.Context) {
+func (s *Service) Handler(c *gin.Context) { s.serve(c, nil) }
+
+// HandlerScoped is Handler with a per-request visibility rule. scopeFor returns the
+// scope of the authenticated caller, or nil when the caller may read every turn.
+func (s *Service) HandlerScoped(scopeFor func(*gin.Context) Scope) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var scope Scope
+		if scopeFor != nil {
+			scope = scopeFor(c)
+		}
+		s.serve(c, scope)
+	}
+}
+
+func (s *Service) serve(c *gin.Context, scope Scope) {
 	if !s.Enabled() {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
@@ -37,5 +51,5 @@ func (s *Service) Handler(c *gin.Context) {
 	if len(ids) > maxQueryTurns {
 		ids = ids[:maxQueryTurns]
 	}
-	c.JSON(http.StatusOK, queryResponse{Turns: s.Query(c.Request.Context(), ids)})
+	c.JSON(http.StatusOK, queryResponse{Turns: s.QueryScoped(c.Request.Context(), ids, scope)})
 }
