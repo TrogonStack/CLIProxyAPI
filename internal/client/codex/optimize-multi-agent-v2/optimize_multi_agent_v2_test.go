@@ -1276,3 +1276,31 @@ func TestCodexSpawnAgentModelsAreScopedToBoundKey(t *testing.T) {
 		t.Fatalf("unrestricted list after a bound request = %s", all)
 	}
 }
+
+func TestPrepareCodexMultiAgentV2ToolsDropsModelListForBoundKeyWithNoModels(t *testing.T) {
+	payload := []byte(`{"tools":[{"type":"namespace","name":"collaboration","tools":[` +
+		`{"type":"function","name":"spawn_agent","description":"Intro line.\n` + codexSpawnAgentModelsHeading + `\n- ` + "`excluded-model`" + `: not yours.\nSpawns an agent.","parameters":{"type":"object"}}]}]}`)
+	headers := http.Header{"User-Agent": []string{"codex_cli_rs/0.144.1"}}
+	bound := func(ids []string) context.Context {
+		ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ginCtx.Set(sdkaccess.AllowedAuthsContextKey, []string{"nothing.json"})
+		ginCtx.Set(sdkaccess.AllowedAuthIDsContextKey, ids)
+		return context.WithValue(context.Background(), "gin", ginCtx)
+	}
+	for name, ctx := range map[string]context.Context{
+		"no credentials resolved": bound([]string{}),
+		"ids never published":     bound(nil),
+	} {
+		got, prepared := PrepareCodexMultiAgentV2Tools(ctx, headers, payload, true, false)
+		if !prepared {
+			t.Fatalf("%s: request was not prepared", name)
+		}
+		description := ojson.GetBytesNoCopy(got, "tools.0.tools.0.description").String()
+		if strings.Contains(description, "excluded-model") || strings.Contains(description, codexSpawnAgentModelsHeading) {
+			t.Fatalf("%s: description still lists models: %q", name, description)
+		}
+		if !strings.Contains(description, "Intro line.") || !strings.Contains(description, "Spawns an agent.") {
+			t.Fatalf("%s: description lost its remaining text: %q", name, description)
+		}
+	}
+}

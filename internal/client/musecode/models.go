@@ -208,9 +208,10 @@ func (h *Handler) HandleModels(c *gin.Context) {
 			return
 		}
 	} else {
-		inputs = ModelInputsFromGlobalRegistry(registry.GetGlobalRegistry())
 		if refs := sdkaccess.AllowedAuthsFromGin(c); len(refs) > 0 {
-			inputs = filterModelInputsForAllowedAuths(inputs, h, refs)
+			inputs = h.modelInputsForAllowedAuths(refs)
+		} else {
+			inputs = ModelInputsFromGlobalRegistry(registry.GetGlobalRegistry())
 		}
 	}
 
@@ -247,30 +248,62 @@ func ModelInputsFromGlobalRegistry(reg *registry.ModelRegistry) []ModelInput {
 			if pInfo == nil {
 				continue
 			}
-			routes = append(routes, ModelRoute{
-				Provider:                  provider,
-				MetadataModelID:           pInfo.MetadataModelID,
-				Created:                   pInfo.Created,
-				OwnedBy:                   pInfo.OwnedBy,
-				Type:                      pInfo.Type,
-				DisplayName:               pInfo.DisplayName,
-				Description:               pInfo.Description,
-				ContextLength:             pInfo.ContextLength,
-				MaxContextLength:          pInfo.MaxContextLength,
-				MaxCompletionTokens:       pInfo.MaxCompletionTokens,
-				InputTokenLimit:           pInfo.InputTokenLimit,
-				OutputTokenLimit:          pInfo.OutputTokenLimit,
-				Thinking:                  pInfo.Thinking,
-				ExplicitThinking:          pInfo.ExplicitThinking,
-				SupportedInputModalities:  append([]string(nil), pInfo.SupportedInputModalities...),
-				ExplicitInputModalities:   pInfo.ExplicitInputModalities,
-				SupportedOutputModalities: append([]string(nil), pInfo.SupportedOutputModalities...),
-				HasOutputModalities:       len(pInfo.SupportedOutputModalities) > 0,
-			})
+			routes = append(routes, modelRouteFromInfo(provider, pInfo))
 		}
 		if len(routes) > 0 {
 			inputs[i].Routes = routes
 		}
+	}
+	return inputs
+}
+
+func modelRouteFromInfo(provider string, pInfo *registry.ModelInfo) ModelRoute {
+	return ModelRoute{
+		Provider:                  provider,
+		MetadataModelID:           pInfo.MetadataModelID,
+		Created:                   pInfo.Created,
+		OwnedBy:                   pInfo.OwnedBy,
+		Type:                      pInfo.Type,
+		DisplayName:               pInfo.DisplayName,
+		Description:               pInfo.Description,
+		ContextLength:             pInfo.ContextLength,
+		MaxContextLength:          pInfo.MaxContextLength,
+		MaxCompletionTokens:       pInfo.MaxCompletionTokens,
+		InputTokenLimit:           pInfo.InputTokenLimit,
+		OutputTokenLimit:          pInfo.OutputTokenLimit,
+		Thinking:                  pInfo.Thinking,
+		ExplicitThinking:          pInfo.ExplicitThinking,
+		SupportedInputModalities:  append([]string(nil), pInfo.SupportedInputModalities...),
+		ExplicitInputModalities:   pInfo.ExplicitInputModalities,
+		SupportedOutputModalities: append([]string(nil), pInfo.SupportedOutputModalities...),
+		HasOutputModalities:       len(pInfo.SupportedOutputModalities) > 0,
+	}
+}
+
+// ModelInputsForClients is ModelInputsFromGlobalRegistry limited to the given clients:
+// models, metadata and provider routes all come from those clients, so a credential
+// outside the set never shapes the capabilities a bound key sees.
+func ModelInputsForClients(reg *registry.ModelRegistry, clientIDs map[string]struct{}) []ModelInput {
+	if reg == nil {
+		return nil
+	}
+	inputs := ModelInputsFromRegistry(reg.GetAvailableModelInfosForClients(clientIDs))
+	byProvider := reg.GetAvailableModelInfosByProviderForClients(clientIDs)
+	for i := range inputs {
+		infos := byProvider[inputs[i].ID]
+		if len(infos) == 0 {
+			continue
+		}
+		providers := make([]string, 0, len(infos))
+		for provider := range infos {
+			providers = append(providers, provider)
+		}
+		sort.Strings(providers)
+		routes := make([]ModelRoute, 0, len(providers))
+		for _, provider := range providers {
+			routes = append(routes, modelRouteFromInfo(provider, infos[provider]))
+		}
+		inputs[i].Routes = routes
 	}
 	return inputs
 }
@@ -1235,22 +1268,11 @@ func minPositive(a, b int) int {
 	}
 }
 
-// filterModelInputsForAllowedAuths keeps only models served by the credentials a bound
-// client key may use.
-func filterModelInputsForAllowedAuths(inputs []ModelInput, h *Handler, refs []string) []ModelInput {
+// modelInputsForAllowedAuths builds the catalog from the credentials a bound client key
+// may use only; models, capabilities and routes of every other credential stay out.
+func (h *Handler) modelInputsForAllowedAuths(refs []string) []ModelInput {
 	if h == nil || h.authManager == nil {
 		return nil
 	}
-	allowed := registry.GetGlobalRegistry().GetAvailableModelInfosForClients(h.authManager.AllowedAuthIDs(refs))
-	ids := make(map[string]struct{}, len(allowed))
-	for _, info := range allowed {
-		ids[info.ID] = struct{}{}
-	}
-	filtered := make([]ModelInput, 0, len(inputs))
-	for _, input := range inputs {
-		if _, ok := ids[input.ID]; ok {
-			filtered = append(filtered, input)
-		}
-	}
-	return filtered
+	return ModelInputsForClients(registry.GetGlobalRegistry(), h.authManager.AllowedAuthIDs(refs))
 }

@@ -226,6 +226,15 @@ func TestAllowedAuthsFallbackReadsGinContext(t *testing.T) {
 	}
 }
 
+func TestAllowedAuthsTypedNilGinContextIsUnrestrictedAndDoesNotPanic(t *testing.T) {
+	f := newAllowedAuthsFixture(t, &FillFirstSelector{})
+	ctx := context.WithValue(context.Background(), "gin", (*gin.Context)(nil))
+	resp, err := f.manager.Execute(ctx, []string{f.provider}, cliproxyexecutor.Request{Model: f.model}, cliproxyexecutor.Options{})
+	if err != nil || len(resp.Payload) == 0 {
+		t.Fatalf("typed-nil gin context: payload=%q err=%v, want unrestricted success", resp.Payload, err)
+	}
+}
+
 // The Codex alpha-search and realtime paths select a credential directly, with nothing but
 // the gin request in ctx. The key's restriction must still bound that selection.
 func TestAllowedAuthsGinOnlyContextBoundsDirectSelection(t *testing.T) {

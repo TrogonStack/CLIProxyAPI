@@ -22,6 +22,7 @@ import (
 
 	"github.com/MoeForge/moego/json"
 	"github.com/MoeForge/moego/ojson"
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
@@ -3342,7 +3343,12 @@ func allowedAuthsForRequest(ctx context.Context, meta map[string]any) map[string
 	if ctx == nil {
 		return nil
 	}
-	ginCtx, ok := ctx.Value("gin").(interface{ Get(string) (any, bool) })
+	carrier := ctx.Value("gin")
+	if concrete, isGin := carrier.(*gin.Context); isGin && concrete == nil {
+		// A typed nil is non-nil as an interface and would panic inside Get.
+		return nil
+	}
+	ginCtx, ok := carrier.(interface{ Get(string) (any, bool) })
 	if !ok || ginCtx == nil {
 		return nil
 	}

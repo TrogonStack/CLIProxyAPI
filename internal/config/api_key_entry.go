@@ -177,8 +177,9 @@ func (e APIKeyEntry) MarshalJSON() ([]byte, error) {
 	return json.Marshal(plain(e))
 }
 
-// ValidateAPIKeys rejects client API keys that cannot be served safely. A key
-// listed twice is ambiguous because the copies may carry different credential
+// ValidateAPIKeys rejects client API keys that cannot be served safely. An entry
+// whose auths list is empty or holds a blank item would lose its restriction when
+// written out, and a key listed twice is ambiguous because the copies may carry different credential
 // bindings, so it is a configuration error instead of "first one wins".
 func (c *SDKConfig) ValidateAPIKeys() error {
 	if c == nil {
@@ -189,6 +190,13 @@ func (c *SDKConfig) ValidateAPIKeys() error {
 		trimmed := strings.TrimSpace(entry.Key)
 		if trimmed == "" {
 			continue
+		}
+		// A present but empty auths list reads as unrestricted once it is written out
+		// (omitempty drops it), so it must not exist in an accepted config.
+		if entry.Auths != nil {
+			if err := entry.check(true); err != nil {
+				return fmt.Errorf("api-keys[%d]: %w", index, err)
+			}
 		}
 		if _, exists := seen[trimmed]; exists {
 			return fmt.Errorf("api-keys[%d] duplicates an earlier api-keys entry; list each key once", index)

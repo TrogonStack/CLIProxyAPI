@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/MoeForge/moego/json"
@@ -143,4 +144,42 @@ func TestPutAPIKeysTakesExplicitBindingsAndValidatesThem(t *testing.T) {
 			t.Fatalf("%s: a rejected PUT changed the keys: %#v", name, h.cfg.APIKeys)
 		}
 	}
+}
+
+func TestPutAPIKeysAcceptsPresentEmptyWrapperAndRejectsMissingField(t *testing.T) {
+	for _, body := range []string{`{"items":[]}`, `{"api-keys":[]}`, `[]`} {
+		h := apiKeysHandler(t, config.APIKeyEntry{Key: "plain"})
+		if rec := callAPIKeys(t, h.PutAPIKeys, http.MethodPut, "/v0/management/api-keys", body); rec.Code != http.StatusOK {
+			t.Fatalf("PUT %s status = %d body=%s", body, rec.Code, rec.Body.String())
+		}
+		if len(h.cfg.APIKeys) != 0 {
+			t.Fatalf("PUT %s left %#v, want the list cleared", body, h.cfg.APIKeys)
+		}
+	}
+	for _, body := range []string{`{}`, `{"other":[]}`, `{"items":null}`, `"x"`} {
+		h := apiKeysHandler(t, config.APIKeyEntry{Key: "plain"})
+		if rec := callAPIKeys(t, h.PutAPIKeys, http.MethodPut, "/v0/management/api-keys", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("PUT %s status = %d, want 400", body, rec.Code)
+		}
+		if len(h.cfg.APIKeys) != 1 {
+			t.Fatalf("a rejected PUT %s changed the list: %#v", body, h.cfg.APIKeys)
+		}
+	}
+}
+
+func TestDeleteAPIKeysRacesSafelyWithPut(t *testing.T) {
+	h := apiKeysHandler(t, config.APIKeyEntry{Key: "a"}, config.APIKeyEntry{Key: "b", Auths: []string{"x.json"}})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			callAPIKeys(t, h.DeleteAPIKeys, http.MethodDelete, "/v0/management/api-keys?value=a", "")
+		}()
+		go func() {
+			defer wg.Done()
+			callAPIKeys(t, h.PutAPIKeys, http.MethodPut, "/v0/management/api-keys", `["a",{"key":"b","auths":["x.json"]}]`)
+		}()
+	}
+	wg.Wait()
 }

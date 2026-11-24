@@ -205,18 +205,20 @@ type apiKeyItem struct {
 func parseAPIKeyItems(data []byte) ([]apiKeyItem, error) {
 	var raws []json.RawMessage
 	if err := json.Unmarshal(data, &raws); err != nil {
+		// Pointers tell an absent field (invalid) from a present empty array (clear the list).
 		var obj struct {
-			Items   []json.RawMessage `json:"items"`
-			APIKeys []json.RawMessage `json:"api-keys"`
+			Items   *[]json.RawMessage `json:"items"`
+			APIKeys *[]json.RawMessage `json:"api-keys"`
 		}
 		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			return nil, errors.New("invalid body")
 		}
-		raws = obj.Items
-		if len(raws) == 0 {
-			raws = obj.APIKeys
-		}
-		if len(raws) == 0 {
+		switch {
+		case obj.Items != nil:
+			raws = *obj.Items
+		case obj.APIKeys != nil:
+			raws = *obj.APIKeys
+		default:
 			return nil, errors.New("invalid body")
 		}
 	}
@@ -277,7 +279,8 @@ func (h *Handler) PatchAPIKeys(c *gin.Context) {
 
 // DeleteAPIKeys removes one key and keeps the binding of every key that stays.
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	keys := h.cfg.APIKeyStrings()
+	// The key list is read by the getter below, which runs under the handler mutex.
+	var keys []string
 	h.deleteFromStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
 }
 

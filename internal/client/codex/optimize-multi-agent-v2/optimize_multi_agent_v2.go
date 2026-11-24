@@ -184,7 +184,37 @@ func prepareCodexMultiAgentV2ToolsDoc(doc *ojson.Doc, ctx context.Context, heade
 		models, formattedMarkdown = codexSpawnAgentModelsAndMarkdownForRequest(ctx, headers, homeEnabled)
 	}
 
-	return rewriteCodexCollaborationToolsDoc(doc, messageToolPaths, toolPaths, models, formattedMarkdown), true
+	stripped := false
+	if len(toolPaths) > 0 && formattedMarkdown == "" {
+		// A bound key with no usable model must not keep the model list the client wrote
+		// into the description: it can name credentials the key may not use.
+		if _, restricted := codexAllowedClients(ctx); restricted {
+			stripped = stripCodexSpawnAgentModels(doc, toolPaths)
+		}
+	}
+	return rewriteCodexCollaborationToolsDoc(doc, messageToolPaths, toolPaths, models, formattedMarkdown) || stripped, true
+}
+
+// stripCodexSpawnAgentModels removes the "Available model overrides" section from every
+// spawn_agent description and keeps the rest of the description.
+func stripCodexSpawnAgentModels(doc *ojson.Doc, toolPaths []string) bool {
+	changed := false
+	for _, toolPath := range toolPaths {
+		descriptionPath := toolPath + ".description"
+		description := doc.Get(descriptionPath)
+		if description.Type != ojson.String {
+			continue
+		}
+		cleaned, _ := removeCodexSpawnAgentModelSections(description.String())
+		if cleaned == description.String() {
+			continue
+		}
+		if errSet := doc.Set(descriptionPath, cleaned); errSet != nil {
+			return changed
+		}
+		changed = true
+	}
+	return changed
 }
 
 // OptimizeCodexMultiAgentV2Request rewrites an eligible spawn_agent request and

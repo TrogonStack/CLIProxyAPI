@@ -192,6 +192,23 @@ func TestValidateAPIKeysRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestValidateAPIKeysRejectsEmptyAuthsThatWouldBecomeUnrestricted(t *testing.T) {
+	for name, entry := range map[string]APIKeyEntry{
+		"empty non-nil list": {Key: "k", Auths: []string{}},
+		"blank item":         {Key: "k", Auths: []string{"a.json", "  "}},
+	} {
+		cfg := SDKConfig{APIKeys: []APIKeyEntry{entry}}
+		if err := cfg.ValidateAPIKeys(); err == nil {
+			t.Fatalf("%s: accepted, but it serializes as an unrestricted key", name)
+		}
+	}
+	// Nil auths is the plain unrestricted key and stays valid.
+	plain := SDKConfig{APIKeys: []APIKeyEntry{{Key: "k"}}}
+	if err := plain.ValidateAPIKeys(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadConfigRejectsDuplicateAPIKeys(t *testing.T) {
 	for name, data := range map[string]string{
 		"legacy": "api-keys:\n  - k\n  - key: k\n    auths: [a.json]\n",

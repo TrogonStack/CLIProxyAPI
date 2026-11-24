@@ -53,3 +53,29 @@ func TestGetAvailableModelsForClientsScopesSuspensionAndQuotaToAllowedClients(t 
 		t.Fatalf("global listing should still include the model: %v", got)
 	}
 }
+
+func TestScopedModelInfoComesFromSelectedClientsOnly(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("a-personal", "codex", []*ModelInfo{{ID: "shared", Created: 1, ContextLength: 100}})
+	r.RegisterClient("b-work", "claude", []*ModelInfo{{ID: "shared", Created: 1, ContextLength: 900, SupportsWebSearch: true}})
+
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	info, byProvider := r.scopedModelInfoLocked("shared", map[string]struct{}{"a-personal": {}})
+	if info == nil || info.ContextLength != 100 || info.SupportsWebSearch {
+		t.Fatalf("scoped info = %+v, want the personal credential's metadata only", info)
+	}
+	if len(byProvider) != 1 || byProvider["codex"] == nil || byProvider["claude"] != nil {
+		t.Fatalf("scoped InfoByProvider = %v, want codex only", byProvider)
+	}
+	info, byProvider = r.scopedModelInfoLocked("shared", map[string]struct{}{"a-personal": {}, "b-work": {}})
+	if info.ContextLength != 100 || !info.SupportsWebSearch || len(byProvider) != 2 {
+		t.Fatalf("combined scoped info = %+v providers=%v, want lowest client's info and OR of web search", info, byProvider)
+	}
+	// The scoped registrations used for listings carry the scoped metadata too.
+	for _, reg := range r.availableRegistrationsForClientsLocked(map[string]struct{}{"a-personal": {}}, r.now()) {
+		if reg.Info.ContextLength != 100 || reg.InfoByProvider["claude"] != nil {
+			t.Fatalf("scoped registration leaked global metadata: %+v %v", reg.Info, reg.InfoByProvider)
+		}
+	}
+}
