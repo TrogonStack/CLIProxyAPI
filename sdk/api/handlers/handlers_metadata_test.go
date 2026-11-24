@@ -438,3 +438,24 @@ func TestHomeUpdatedAPIKeyOverridesParentWithAPIKeyAfterCapture(t *testing.T) {
 		t.Fatalf("coreusage.APIKeyFromContext = %q, want %q", got, "home-dispatched-key-b")
 	}
 }
+
+func TestRequestExecutionMetadataCarriesAllowedAuths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newCtx := func(allowed []string) context.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		if allowed != nil {
+			c.Set("accessAllowedAuths", allowed)
+		}
+		return context.WithValue(context.Background(), "gin", c)
+	}
+
+	meta := requestExecutionMetadata(newCtx([]string{"personal.json", "claude-personal.json"}))
+	got, _ := meta[coreexecutor.AllowedAuthsMetadataKey].([]string)
+	if len(got) != 2 || got[0] != "personal.json" || got[1] != "claude-personal.json" {
+		t.Fatalf("allowed auths metadata = %v", meta[coreexecutor.AllowedAuthsMetadataKey])
+	}
+	if _, ok := requestExecutionMetadata(newCtx(nil))[coreexecutor.AllowedAuthsMetadataKey]; ok {
+		t.Fatal("unbound request must not carry allowed auths")
+	}
+}

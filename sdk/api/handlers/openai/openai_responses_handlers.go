@@ -885,6 +885,11 @@ func (h *OpenAIResponsesAPIHandler) HandlerType() string {
 	return OpenaiResponse
 }
 
+// ModelsForRequest returns the models visible to the request's client key.
+func (h *OpenAIResponsesAPIHandler) ModelsForRequest(c *gin.Context) []map[string]any {
+	return h.AvailableModelsForRequest(c, "openai")
+}
+
 // Models returns the OpenAIResponses-compatible model metadata supported by this handler.
 func (h *OpenAIResponsesAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
@@ -898,7 +903,7 @@ func (h *OpenAIResponsesAPIHandler) Models() []map[string]any {
 func (h *OpenAIResponsesAPIHandler) OpenAIResponsesModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   h.Models(),
+		"data":   h.ModelsForRequest(c),
 	})
 }
 
@@ -915,6 +920,7 @@ func (h *OpenAIResponsesAPIHandler) prepareCodexMultiAgentV2ToolsDoc(c *gin.Cont
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	h.PublishAllowedAuthIDs(c)
 	requestCtx = context.WithValue(requestCtx, "gin", c)
 
 	var requestHeaders http.Header

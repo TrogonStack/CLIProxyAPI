@@ -22,6 +22,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -386,15 +387,25 @@ func truncateWebsocketCloseReason(reason string, maxBytes int) string {
 }
 
 func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurn(c *gin.Context, baseReq *http.Request, payload []byte, requestModelName string, updateRequestContext bool) (string, *interfaces.ErrorMessage) {
+	result, errAuth := h.authenticateResponsesWebsocketTurnResult(c, baseReq, payload, requestModelName, updateRequestContext)
+	if errAuth != nil || result == nil {
+		return "", errAuth
+	}
+	return result.Principal, nil
+}
+
+// authenticateResponsesWebsocketTurnResult authenticates one frame and returns the full
+// access result, so a caller can compare the credential binding the frame resolves to.
+func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurnResult(c *gin.Context, baseReq *http.Request, payload []byte, requestModelName string, updateRequestContext bool) (*sdkaccess.Result, *interfaces.ErrorMessage) {
 	if h == nil || h.AccessManager == nil {
-		return "", nil
+		return nil, nil
 	}
 	sourceReq := baseReq
 	if sourceReq == nil && c != nil {
 		sourceReq = c.Request
 	}
 	if sourceReq == nil {
-		return "", nil
+		return nil, nil
 	}
 	authBody := payload
 	if requestModelName != "" && json.Valid(payload) && strings.TrimSpace(ojson.GetBytesNoCopy(payload, "model").String()) == "" {
@@ -423,13 +434,13 @@ func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurn(c *gin.Co
 		if msg == "" {
 			msg = authErr.Error()
 		}
-		return "", &interfaces.ErrorMessage{
+		return nil, &interfaces.ErrorMessage{
 			StatusCode: authErr.HTTPStatusCode(),
 			Error:      errors.New(msg),
 		}
 	}
 	if result == nil {
-		return "", nil
+		return nil, nil
 	}
 	if c != nil && updateRequestContext {
 		c.Set("userApiKey", result.Principal)
@@ -439,6 +450,11 @@ func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurn(c *gin.Co
 		} else {
 			c.Set("accessMetadata", nil)
 		}
+		if len(result.AllowedAuths) > 0 {
+			c.Set(sdkaccess.AllowedAuthsContextKey, result.AllowedAuths)
+		} else {
+			c.Set(sdkaccess.AllowedAuthsContextKey, nil)
+		}
 		if c.Request != nil {
 			reqCtx := usage.WithAPIKey(c.Request.Context(), result.Principal)
 			reqCtx = usage.WithAccessProvider(reqCtx, result.Provider)
@@ -446,7 +462,7 @@ func (h *OpenAIResponsesAPIHandler) authenticateResponsesWebsocketTurn(c *gin.Co
 			c.Request = c.Request.WithContext(reqCtx)
 		}
 	}
-	return result.Principal, nil
+	return result, nil
 }
 
 // ResponsesWebsocket handles websocket requests for /v1/responses.
@@ -1043,12 +1059,23 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 					return ok && current != nil && !current.Disabled && current.Status != coreauth.StatusDisabled
 				})
 				boundPrincipal := usage.APIKeyFromContext(cliCtx)
+				// Snapshot on the turn goroutine; the authorizer runs on the executor goroutine and
+				// must not read the gin context, which this goroutine rewrites per turn.
+				boundAllowedAuths := append([]string(nil), sdkaccess.AllowedAuthsFromGin(c)...)
 				cliCtx = cliproxyexecutor.WithWebsocketTurnAuthorizer(cliCtx, func(turnPayload []byte) ([]byte, error) {
-					principal, errAuth := h.authenticateResponsesWebsocketTurn(c, upgradeRequest, turnPayload, modelName, false)
-					if errAuth == nil && principal != "" && principal != boundPrincipal {
+					result, errAuth := h.authenticateResponsesWebsocketTurnResult(c, upgradeRequest, turnPayload, modelName, false)
+					if errAuth == nil && result != nil && result.Principal != "" && result.Principal != boundPrincipal {
 						errAuth = &interfaces.ErrorMessage{
 							StatusCode: http.StatusUnauthorized,
 							Error:      errors.New("client credential changed during the websocket stream; reconnect"),
+						}
+					}
+					// The in-flight stream was dispatched under boundAllowedAuths. A frame whose
+					// binding changed (key rebound mid-socket) must not ride the stale restriction.
+					if errAuth == nil && result != nil && !sameAllowedAuths(result.AllowedAuths, boundAllowedAuths) {
+						errAuth = &interfaces.ErrorMessage{
+							StatusCode: http.StatusUnauthorized,
+							Error:      errors.New("client credential binding changed during the websocket stream; reconnect"),
 						}
 					}
 					if errAuth == nil {
@@ -1432,4 +1459,23 @@ func writeResponsesWebsocketPreviousResponseNotFound(writer *responsesWebsocketW
 		errorPayload, _ = ojson.SetBytes(errorPayload, "error.event_id", eventID)
 	}
 	return writeResponsesWebsocketPayload(writer, wsTimelineLog, errorPayload, time.Now())
+}
+
+// sameAllowedAuths reports whether two credential restrictions are the same set. Nil and
+// empty both mean unrestricted.
+func sameAllowedAuths(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, v := range a {
+		seen[v]++
+	}
+	for _, v := range b {
+		seen[v]--
+		if seen[v] < 0 {
+			return false
+		}
+	}
+	return true
 }

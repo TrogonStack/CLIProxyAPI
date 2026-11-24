@@ -15,7 +15,7 @@ func TestAttachWebsocketRouteDisabledInHomeMode(t *testing.T) {
 		for _, wsAuth := range []bool{false, true} {
 			t.Run(fmt.Sprintf("home=%t/ws-auth=%t", homeEnabled, wsAuth), func(t *testing.T) {
 				cfg := &config.Config{
-					SDKConfig:     config.SDKConfig{APIKeys: []string{"test-key"}},
+					SDKConfig:     config.SDKConfig{APIKeys: config.APIKeyEntries("test-key")},
 					Home:          config.HomeConfig{Enabled: homeEnabled},
 					WebsocketAuth: wsAuth,
 				}

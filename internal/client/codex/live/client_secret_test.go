@@ -119,7 +119,7 @@ func TestClientSecretStoreRejectsExpiredToken(t *testing.T) {
 	store := newClientSecretStore()
 	now := time.Unix(1700000000, 0)
 	store.now = func() time.Time { return now }
-	token, _, _, errCreate := store.create(json.RawMessage(`{"type":"realtime","model":"gpt-live-1-codex"}`), time.Minute, "issuer", "test")
+	token, _, _, errCreate := store.create(json.RawMessage(`{"type":"realtime","model":"gpt-live-1-codex"}`), time.Minute, "issuer", "test", nil)
 	if errCreate != nil {
 		t.Fatalf("create() error = %v", errCreate)
 	}
@@ -258,5 +258,26 @@ func TestApplyClientSecretCallSession(t *testing.T) {
 	}
 	if payload.SDP != "v=0\r\n" || payload.Session.Instructions != "help" {
 		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestClientSecretCarriesIssuerCredentialRestriction(t *testing.T) {
+	store := newClientSecretStore()
+	session := json.RawMessage(`{"type":"realtime","model":"gpt-live-1-codex"}`)
+	token, _, _, errCreate := store.create(session, time.Minute, "issuer", "test", []string{"personal.json"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	authorization, errAuth := store.authenticate(token)
+	if errAuth != nil {
+		t.Fatal(errAuth)
+	}
+	if got := authorization.IssuerAllowedAuths; len(got) != 1 || got[0] != "personal.json" {
+		t.Fatalf("IssuerAllowedAuths = %v, want [personal.json]", got)
+	}
+	unbound, _, _, _ := store.create(session, time.Minute, "issuer", "test", nil)
+	authorization, _ = store.authenticate(unbound)
+	if len(authorization.IssuerAllowedAuths) != 0 {
+		t.Fatalf("unbound issuer must stay unrestricted, got %v", authorization.IssuerAllowedAuths)
 	}
 }

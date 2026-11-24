@@ -692,7 +692,8 @@ func (c *Client) GetLogs(after int64, limit int) ([]string, int64, error) {
 func (c *Client) GetAPIKeys() ([]string, error) {
 	value, code, err := c.v8ConfigGet("access/api-keys")
 	if err == nil {
-		return stringSlice(value)
+		keys, _, errKeys := apiKeyItems(value)
+		return keys, errKeys
 	}
 	if err == errV8ConfigNodeMissing {
 		return nil, nil
@@ -702,7 +703,8 @@ func (c *Client) GetAPIKeys() ([]string, error) {
 		if errGet != nil {
 			return nil, errGet
 		}
-		return stringSlice(wrapper["api-keys"])
+		keys, _, errKeys := apiKeyItems(wrapper["api-keys"])
+		return keys, errKeys
 	}
 	return nil, err
 }
@@ -712,8 +714,16 @@ func (c *Client) GetAPIKeys() ([]string, error) {
 // write is rejected with 412 if another client saved after the read. A 405/501
 // write status means this specific route is unimplemented and falls back to
 // the supplied v0 operation; 412 and other statuses are surfaced.
-func (c *Client) replaceAPIKeys(keys []string, etag string, v0 func() error) error {
-	body, _ := json.Marshal(keys)
+func (c *Client) replaceAPIKeys(keys []string, bindings map[string]any, etag string, v0 func() error) error {
+	entries := make([]any, 0, len(keys))
+	for _, key := range keys {
+		if binding, ok := bindings[key]; ok {
+			entries = append(entries, binding)
+			continue
+		}
+		entries = append(entries, key)
+	}
+	body, _ := json.Marshal(entries)
 	headers := http.Header{}
 	if etag != "" {
 		headers.Set("If-Match", etag)
@@ -734,17 +744,17 @@ func (c *Client) replaceAPIKeys(keys []string, etag string, v0 func() error) err
 // mutateAPIKeys reads the current access.api-keys list, applies mutator, and
 // writes it back conditionally so concurrent edits are not silently lost.
 // It falls back to the v0 contract only when v8 is unsupported.
-func (c *Client) mutateAPIKeys(mutator func(keys []string) ([]string, error), v0 func() error) error {
-	keys, etag, code, err := c.apiKeysV8()
+func (c *Client) mutateAPIKeys(mutator func(keys []string, bindings map[string]any) ([]string, error), v0 func() error) error {
+	keys, bindings, etag, code, err := c.apiKeysV8()
 	if err == nil {
 		if etag == "" {
 			return fmt.Errorf("cannot modify api-keys: server returned no config version (ETag); refusing unconditional replace")
 		}
-		next, errMut := mutator(keys)
+		next, errMut := mutator(keys, bindings)
 		if errMut != nil {
 			return errMut
 		}
-		return c.replaceAPIKeys(next, etag, v0)
+		return c.replaceAPIKeys(next, bindings, etag, v0)
 	}
 	if isRouteUnsupported(code) {
 		return v0()
@@ -755,7 +765,7 @@ func (c *Client) mutateAPIKeys(mutator func(keys []string) ([]string, error), v0
 // AddAPIKey adds a new API key. On v8 it appends to access.api-keys; on v0 it
 // falls back to the legacy patch contract.
 func (c *Client) AddAPIKey(key string) error {
-	return c.mutateAPIKeys(func(keys []string) ([]string, error) {
+	return c.mutateAPIKeys(func(keys []string, _ map[string]any) ([]string, error) {
 		return append(keys, key), nil
 	}, func() error {
 		body := map[string]any{"old": nil, "new": key}
@@ -770,12 +780,22 @@ func (c *Client) AddAPIKey(key string) error {
 // longer has that value at this position the write is refused instead of
 // silently editing a shifted entry.
 func (c *Client) EditAPIKey(index int, newValue string, expected ...string) error {
-	return c.mutateAPIKeys(func(keys []string) ([]string, error) {
+	return c.mutateAPIKeys(func(keys []string, bindings map[string]any) ([]string, error) {
 		if index < 0 || index >= len(keys) {
 			return nil, fmt.Errorf("index %d out of range", index)
 		}
 		if len(expected) > 0 && keys[index] != expected[0] {
 			return nil, fmt.Errorf("api-keys changed since selection (entry at index %d no longer matches); please refresh", index)
+		}
+		// A renamed key keeps its credential binding.
+		if binding, ok := bindings[keys[index]].(map[string]any); ok {
+			renamed := make(map[string]any, len(binding))
+			for field, value := range binding {
+				renamed[field] = value
+			}
+			renamed["key"] = newValue
+			delete(bindings, keys[index])
+			bindings[newValue] = renamed
 		}
 		keys[index] = newValue
 		return keys, nil
@@ -791,7 +811,7 @@ func (c *Client) EditAPIKey(index int, newValue string, expected ...string) erro
 // value shown to the user, so a concurrent reorder/delete is refused rather
 // than removing the wrong entry.
 func (c *Client) DeleteAPIKey(index int, expected ...string) error {
-	return c.mutateAPIKeys(func(keys []string) ([]string, error) {
+	return c.mutateAPIKeys(func(keys []string, _ map[string]any) ([]string, error) {
 		if index < 0 || index >= len(keys) {
 			return nil, fmt.Errorf("index %d out of range", index)
 		}
@@ -815,28 +835,60 @@ func (c *Client) DeleteAPIKey(index int, expected ...string) error {
 // config snapshot it came from, so a subsequent replace is conditional on that
 // same version. Reading the root document (rather than the child node) keeps
 // the list value and its version consistent even when the node is absent.
-func (c *Client) apiKeysV8() ([]string, string, int, error) {
+func (c *Client) apiKeysV8() ([]string, map[string]any, string, int, error) {
 	data, code, hdr, err := c.doRequest("GET", "/v8/management/config", nil)
 	etag := ""
 	if hdr != nil {
 		etag = hdr.Get("ETag")
 	}
 	if err != nil {
-		return nil, "", code, err
+		return nil, nil, "", code, err
 	}
 	if code >= 400 {
-		return nil, "", code, fmt.Errorf("HTTP %d: %s", code, strings.TrimSpace(string(data)))
+		return nil, nil, "", code, fmt.Errorf("HTTP %d: %s", code, strings.TrimSpace(string(data)))
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, "", code, err
+		return nil, nil, "", code, err
 	}
 	var node any
 	if access, ok := doc["access"].(map[string]any); ok {
 		node = access["api-keys"]
 	}
-	keys, err := stringSlice(node)
-	return keys, etag, code, err
+	keys, bindings, err := apiKeyItems(node)
+	return keys, bindings, etag, code, err
+}
+
+// apiKeyItems reads an api-keys list whose entries are plain strings or {key, auths}
+// mappings. It returns the key values and the mapping entries by key, so a write can
+// keep the credential binding of keys it did not remove.
+func apiKeyItems(v any) ([]string, map[string]any, error) {
+	if v == nil {
+		return nil, nil, nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, nil, err
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, nil, err
+	}
+	keys := make([]string, 0, len(items))
+	bindings := make(map[string]any)
+	for _, item := range items {
+		switch entry := item.(type) {
+		case string:
+			keys = append(keys, entry)
+		case map[string]any:
+			key, _ := entry["key"].(string)
+			keys = append(keys, key)
+			bindings[key] = entry
+		default:
+			return nil, nil, fmt.Errorf("unsupported api-keys entry type %T", item)
+		}
+	}
+	return keys, bindings, nil
 }
 
 func stringSlice(v any) ([]string, error) {

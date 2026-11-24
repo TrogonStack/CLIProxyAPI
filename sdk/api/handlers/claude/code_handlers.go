@@ -58,6 +58,11 @@ func (h *ClaudeCodeAPIHandler) HandlerType() string {
 	return Claude
 }
 
+// ModelsForRequest returns the models visible to the request's client key.
+func (h *ClaudeCodeAPIHandler) ModelsForRequest(c *gin.Context) []map[string]any {
+	return h.AvailableModelsForRequest(c, "claude")
+}
+
 // Models returns a list of models supported by this handler.
 func (h *ClaudeCodeAPIHandler) Models() []map[string]any {
 	// Get dynamic models from the global registry
@@ -161,7 +166,7 @@ func rewriteClaudeDDModelInBody(rawJSON []byte) []byte {
 func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
 	cfg := h.CurrentConfig()
 	disableCloaking := cfg != nil && cfg.ClaudeCode.DisableCloakingModelList
-	h.WriteModelListResponse(c, h.HandlerType(), claudemodels.BuildResponse(h.Models(), disableCloaking))
+	h.WriteModelListResponse(c, h.HandlerType(), claudemodels.BuildResponse(h.ModelsForRequest(c), disableCloaking))
 }
 
 // handleNonStreamingResponse handles non-streaming content generation requests for Claude models.

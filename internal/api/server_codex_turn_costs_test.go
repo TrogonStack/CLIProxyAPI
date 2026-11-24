@@ -23,7 +23,7 @@ func postTurnCosts(t *testing.T, server *Server, authorization string) *httptest
 }
 
 func TestCodexTurnCostsRouteRequiresAPIKey(t *testing.T) {
-	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}}}
+	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")}}
 	cfg.CodexTurnCosts.Enabled = true
 	server := newTestServerWithConfig(t, cfg)
 
@@ -37,7 +37,7 @@ func TestCodexTurnCostsRouteRequiresAPIKey(t *testing.T) {
 }
 
 func TestCodexTurnCostsRouteDisabledReturnsNotFound(t *testing.T) {
-	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}}}
+	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")}}
 	server := newTestServerWithConfig(t, cfg)
 
 	if rr := postTurnCosts(t, server, "Bearer test-key"); rr.Code != http.StatusNotFound {

@@ -2,6 +2,7 @@ package management
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -157,15 +158,140 @@ func (h *Handler) deleteFromStringList(c *gin.Context, targetOf func() *[]string
 // api-keys
 func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
 func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
-	}, nil)
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	items, err := parseAPIKeyItems(data)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// A plain string keeps the binding the key already has, so a list of bare keys can
+	// never widen a bound key. An object states its binding explicitly.
+	bindings := make(map[string][]string, len(h.cfg.APIKeys))
+	for _, entry := range h.cfg.APIKeys {
+		if entry.Bound() {
+			bindings[strings.TrimSpace(entry.Key)] = entry.Auths
+		}
+	}
+	var next config.SDKConfig
+	next.APIKeys = make([]config.APIKeyEntry, 0, len(items))
+	for _, item := range items {
+		entry := item.entry
+		if item.plain {
+			entry.Auths = bindings[strings.TrimSpace(entry.Key)]
+		}
+		next.APIKeys = append(next.APIKeys, entry)
+	}
+	if rejectInvalidAPIKeys(c, &next) {
+		return
+	}
+	h.cfg.APIKeys = next.APIKeys
+	h.persistLocked(c)
 }
+
+type apiKeyItem struct {
+	entry config.APIKeyEntry
+	plain bool
+}
+
+// parseAPIKeyItems reads the body GetAPIKeys writes: a bare array, {"items": [...]} or the {"api-keys": [...]} object GetAPIKeys
+// returns,
+// whose elements are plain key strings or {key, auths} objects.
+func parseAPIKeyItems(data []byte) ([]apiKeyItem, error) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(data, &raws); err != nil {
+		// Pointers tell an absent field (invalid) from a present empty array (clear the list).
+		var obj struct {
+			Items   *[]json.RawMessage `json:"items"`
+			APIKeys *[]json.RawMessage `json:"api-keys"`
+		}
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
+			return nil, errors.New("invalid body")
+		}
+		switch {
+		case obj.Items != nil:
+			raws = *obj.Items
+		case obj.APIKeys != nil:
+			raws = *obj.APIKeys
+		default:
+			return nil, errors.New("invalid body")
+		}
+	}
+	items := make([]apiKeyItem, 0, len(raws))
+	for i, raw := range raws {
+		var entry config.APIKeyEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, fmt.Errorf("api-keys[%d]: %w", i, err)
+		}
+		items = append(items, apiKeyItem{entry: entry, plain: strings.HasPrefix(strings.TrimSpace(string(raw)), `"`)})
+	}
+	return items, nil
+}
+
+// PatchAPIKeys renames or appends one key. A rename keeps the credential binding of
+// the key it renames, so editing a key never widens it to every credential.
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, func() *[]string { return &h.cfg.APIKeys }, func() {})
+	var body struct {
+		Old   *string `json:"old"`
+		New   *string `json:"new"`
+		Index *int    `json:"index"`
+		Value *string `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	entries := append([]config.APIKeyEntry(nil), h.cfg.APIKeys...)
+	switch {
+	case body.Index != nil && body.Value != nil && *body.Index >= 0 && *body.Index < len(entries):
+		entries[*body.Index].Key = *body.Value
+	case body.Old != nil && body.New != nil:
+		renamed := false
+		for i := range entries {
+			if entries[i].Key == *body.Old {
+				entries[i].Key = *body.New
+				renamed = true
+				break
+			}
+		}
+		if !renamed {
+			entries = append(entries, config.APIKeyEntry{Key: *body.New})
+		}
+	default:
+		c.JSON(400, gin.H{"error": "missing fields"})
+		return
+	}
+	var next config.SDKConfig
+	next.APIKeys = entries
+	if rejectInvalidAPIKeys(c, &next) {
+		return
+	}
+	h.cfg.APIKeys = entries
+	h.persistLocked(c)
 }
+
+// DeleteAPIKeys removes one key and keeps the binding of every key that stays.
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, func() *[]string { return &h.cfg.APIKeys }, func() {})
+	// The key list is read by the getter below, which runs under the handler mutex.
+	var keys []string
+	h.deleteFromStringList(c, func() *[]string { keys = h.cfg.APIKeyStrings(); return &keys }, func() { h.cfg.SetAPIKeyStrings(keys) })
+}
+
+// rejectInvalidAPIKeys answers 400 when the proposed key list is not a valid config,
+// for example because it lists a key twice.
+func rejectInvalidAPIKeys(c *gin.Context, proposed *config.SDKConfig) bool {
+	if err := proposed.ValidateAPIKeys(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return true
+	}
+	return false
 }
 
 // gemini-api-key: []GeminiKey

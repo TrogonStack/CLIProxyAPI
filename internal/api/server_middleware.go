@@ -360,7 +360,7 @@ func (s *Server) homeHeartbeatMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) exampleAPIKeySafeModeRequired(cfg *config.Config) bool {
-	return s != nil && s.exampleAPIKeySafeModeEnabled && cfg != nil && safemode.HasExampleAPIKeys(cfg.APIKeys)
+	return s != nil && s.exampleAPIKeySafeModeEnabled && cfg != nil && safemode.HasExampleAPIKeys(cfg.APIKeyStrings())
 }
 
 func (s *Server) exampleAPIKeySafeModeMiddleware() gin.HandlerFunc {
@@ -397,7 +397,7 @@ func (s *Server) serveExampleAPIKeyWarningPage(c *gin.Context) {
 	cfg := s.getConfig()
 	var keys []string
 	if cfg != nil {
-		keys = safemode.ExampleAPIKeys(cfg.APIKeys)
+		keys = safemode.ExampleAPIKeys(cfg.APIKeyStrings())
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
@@ -522,6 +522,9 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
+				if len(result.AllowedAuths) > 0 {
+					c.Set(sdkaccess.AllowedAuthsContextKey, result.AllowedAuths)
+				}
 				reqCtx := coreusage.WithAPIKey(c.Request.Context(), result.Principal)
 				reqCtx = coreusage.WithAccessProvider(reqCtx, result.Provider)
 				reqCtx = coreusage.WithIsNativeKey(reqCtx, coreusage.IsNativeAccessProvider(result.Provider))
@@ -590,6 +593,9 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 		}
 		c.Set("userApiKey", principal)
 		c.Set("accessProvider", provider)
+		if len(authorization.IssuerAllowedAuths) > 0 {
+			c.Set(sdkaccess.AllowedAuthsContextKey, authorization.IssuerAllowedAuths)
+		}
 		reqCtx := coreusage.WithAPIKey(c.Request.Context(), principal)
 		reqCtx = coreusage.WithAccessProvider(reqCtx, provider)
 		reqCtx = coreusage.WithIsNativeKey(reqCtx, coreusage.IsNativeAccessProvider(provider))

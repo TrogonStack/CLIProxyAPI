@@ -616,7 +616,7 @@ func newTestServerWithOptions(t *testing.T, opts ...ServerOption) *Server {
 	t.Helper()
 	cfg := &proxyconfig.Config{
 		SDKConfig: sdkconfig.SDKConfig{
-			APIKeys: []string{"test-key"},
+			APIKeys: proxyconfig.APIKeyEntries("test-key"),
 		},
 	}
 	return newTestServerWithConfig(t, cfg, opts...)
@@ -1849,7 +1849,7 @@ func TestExampleAPIKeySafeModeShowsWarningAndKeepsManagement(t *testing.T) {
 
 	server := newTestServerWithOptions(t, WithExampleAPIKeySafeMode())
 	cfg := *server.cfg
-	cfg.APIKeys = []string{"your-api-key-1"}
+	cfg.APIKeys = proxyconfig.APIKeyEntries("your-api-key-1")
 	server.UpdateClients(&cfg)
 
 	t.Run("root warning page includes management link", func(t *testing.T) {
@@ -1945,7 +1945,7 @@ func TestExampleAPIKeySafeModeShowsWarningAndKeepsManagement(t *testing.T) {
 
 	t.Run("safe mode clears after key update", func(t *testing.T) {
 		nextCfg := cfg
-		nextCfg.APIKeys = []string{"real-key"}
+		nextCfg.APIKeys = proxyconfig.APIKeyEntries("real-key")
 		server.UpdateClients(&nextCfg)
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -2172,7 +2172,7 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 		modelRegistry.UnregisterClient(clientID)
 	})
 
-	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: []string{"test-key"}}}
+	cfg := &proxyconfig.Config{SDKConfig: sdkconfig.SDKConfig{APIKeys: proxyconfig.APIKeyEntries("test-key")}}
 	cfg.Client.Codex.EnableApplyPatch = true
 	server := newTestServerWithConfig(t, cfg)
 	server.handlers.AuthManager.RegisterExecutor(executor.NewCodexAutoExecutor(&proxyconfig.Config{}))

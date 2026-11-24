@@ -102,6 +102,9 @@ type authSelectionEligibility struct {
 	requiredKind     string
 	credentialPolicy string
 	disallowFreeAuth bool
+	// allowedAuths restricts selection to credentials whose ID or file name is in
+	// the set. A nil set means no restriction; a non-nil empty set allows nothing.
+	allowedAuths map[string]struct{}
 }
 
 func withRequiredAuthKind(ctx context.Context, requiredKind string) context.Context {
@@ -121,7 +124,10 @@ func credentialPolicyFromContext(ctx context.Context) string {
 }
 
 func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
-	eligibility := authSelectionEligibility{disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata)}
+	eligibility := authSelectionEligibility{
+		disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata),
+		allowedAuths:     allowedAuthsForRequest(ctx, opts.Metadata),
+	}
 	if ctx != nil {
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
 		eligibility.credentialPolicy, _ = ctx.Value(credentialPolicyContextKey{}).(string)
@@ -137,6 +143,9 @@ func (e authSelectionEligibility) allows(auth *Auth) bool {
 		return false
 	}
 	if e.credentialPolicy != "" && !credentialPolicyAllows(e.credentialPolicy, auth) {
+		return false
+	}
+	if e.allowedAuths != nil && !authMatchesAllowedSet(e.allowedAuths, auth) {
 		return false
 	}
 	return !e.disallowFreeAuth || !isFreeCodexAuth(auth)
@@ -2083,6 +2092,29 @@ func (m *Manager) List() []*Auth {
 		list = append(list, auth.Clone())
 	}
 	return list
+}
+
+// AllowedAuthIDs resolves client-key credential references (credential IDs or file names)
+// to the IDs of the credentials currently registered. The result is never nil.
+func (m *Manager) AllowedAuthIDs(refs []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if trimmed := strings.TrimSpace(ref); trimmed != "" {
+			set[trimmed] = struct{}{}
+		}
+	}
+	ids := make(map[string]struct{})
+	if m == nil || len(set) == 0 {
+		return ids
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for id, auth := range m.auths {
+		if authMatchesAllowedSet(set, auth) {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids
 }
 
 // IDsByProvider returns matching credential IDs without cloning unrelated auth state.

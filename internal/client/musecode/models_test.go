@@ -646,3 +646,36 @@ func TestHandleModelsHomeModeHookAndFallback(t *testing.T) {
 		t.Fatalf("expected claude-opus-4-6 enriched with static reasoning metadata")
 	}
 }
+
+func TestModelInputsForClientsScopeRoutesAndCapabilitiesToAllowedClients(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	const modelID = "scoped-routes-model"
+	reg.RegisterClient("scoped-routes-personal", "codex", []*registry.ModelInfo{{ID: modelID, Created: 1, ContextLength: 100, MaxCompletionTokens: 10}})
+	reg.RegisterClient("scoped-routes-work", "claude", []*registry.ModelInfo{{ID: modelID, Created: 1, ContextLength: 900, MaxCompletionTokens: 90}})
+	t.Cleanup(func() {
+		reg.UnregisterClient("scoped-routes-personal")
+		reg.UnregisterClient("scoped-routes-work")
+	})
+
+	inputs := ModelInputsForClients(reg, map[string]struct{}{"scoped-routes-personal": {}})
+	var got *ModelInput
+	for i := range inputs {
+		if inputs[i].ID == modelID {
+			got = &inputs[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("the allowed credential's model is missing from %d inputs", len(inputs))
+	}
+	if len(got.Routes) != 1 || got.Routes[0].Provider != "codex" || got.Routes[0].ContextLength != 100 {
+		t.Fatalf("routes = %+v, want only the allowed codex route", got.Routes)
+	}
+	if got.ContextLength != 100 || got.MaxCompletionTokens != 10 {
+		t.Fatalf("capabilities = %d/%d, want the allowed credential's 100/10", got.ContextLength, got.MaxCompletionTokens)
+	}
+	for _, input := range ModelInputsForClients(reg, map[string]struct{}{"nobody": {}}) {
+		if input.ID == modelID {
+			t.Fatal("a client set that serves nothing listed the model")
+		}
+	}
+}

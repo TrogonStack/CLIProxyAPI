@@ -122,7 +122,7 @@ func readServerTunnelBinary(t *testing.T, conn *websocket.Conn) wstunnel.DataFra
 func TestServerWebsocketTunnel_EndToEndAndTenantIsolation(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{
-			APIKeys: []string{"tenant-a", "tenant-b"},
+			APIKeys: config.APIKeyEntries("tenant-a", "tenant-b"),
 		},
 	}
 	apiSrv := newTestTunnelAPIServer(t, cfg)
@@ -206,7 +206,7 @@ func TestServerWebsocketTunnel_EndToEndAndTenantIsolation(t *testing.T) {
 func TestServerWebsocketTunnel_NonGetMethodsReturn405AndPreserveCORSOptions(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{
-			APIKeys: []string{"method-key"},
+			APIKeys: config.APIKeyEntries("method-key"),
 		},
 	}
 	apiSrv := newTestTunnelAPIServer(t, cfg)
@@ -284,7 +284,7 @@ func TestServerWebsocketTunnel_RejectsWhenAPIKeysEmptyOrSafeMode(t *testing.T) {
 	t.Run("example api-key safe mode blocks /v1/tunnel with 403", func(t *testing.T) {
 		cfg := &config.Config{
 			SDKConfig: config.SDKConfig{
-				APIKeys: []string{"your-api-key-1"},
+				APIKeys: config.APIKeyEntries("your-api-key-1"),
 			},
 		}
 		apiSrv := newTestTunnelAPIServer(t, cfg, WithExampleAPIKeySafeMode())
@@ -327,7 +327,7 @@ func TestServerWebsocketTunnel_ServiceUnavailableResponseBodies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{
-				SDKConfig: config.SDKConfig{APIKeys: []string{"key"}},
+				SDKConfig: config.SDKConfig{APIKeys: config.APIKeyEntries("key")},
 				Home:      config.HomeConfig{Enabled: tc.homeEnabled},
 			}
 			apiSrv := newTestTunnelAPIServer(t, cfg)
@@ -356,7 +356,7 @@ func TestServerWebsocketTunnel_ServiceUnavailableResponseBodies(t *testing.T) {
 func TestServerWebsocketTunnel_HotReloadRevokesRemovedKeyOnly(t *testing.T) {
 	cfg := &config.Config{
 		SDKConfig: config.SDKConfig{
-			APIKeys: []string{"key-keep", "key-revoke"},
+			APIKeys: config.APIKeyEntries("key-keep", "key-revoke"),
 		},
 	}
 	apiSrv := newTestTunnelAPIServer(t, cfg)
@@ -375,7 +375,7 @@ func TestServerWebsocketTunnel_HotReloadRevokesRemovedKeyOnly(t *testing.T) {
 
 	updatedCfg := &config.Config{
 		SDKConfig: config.SDKConfig{
-			APIKeys: []string{"key-keep"},
+			APIKeys: config.APIKeyEntries("key-keep"),
 		},
 	}
 	apiSrv.UpdateClients(updatedCfg)
@@ -410,7 +410,7 @@ func TestServerWebsocketTunnel_ServerStopClosesConnections(t *testing.T) {
 		Host: "127.0.0.1",
 		Port: port,
 		SDKConfig: config.SDKConfig{
-			APIKeys: []string{"stop-key"},
+			APIKeys: config.APIKeyEntries("stop-key"),
 		},
 	}
 	apiSrv := newTestTunnelAPIServer(t, cfg)

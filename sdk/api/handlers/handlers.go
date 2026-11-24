@@ -21,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coresession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
@@ -380,8 +381,26 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	if disallowFreeAuthFromContext(ctx) {
 		meta[coreexecutor.DisallowFreeAuthMetadataKey] = true
 	}
+	if allowedAuths := AllowedAuthsFromContext(ctx); len(allowedAuths) > 0 {
+		meta[coreexecutor.AllowedAuthsMetadataKey] = allowedAuths
+	}
 	return meta
 }
+
+// AllowedAuthsFromContext returns the credential restriction of the authenticated
+// client key carried by the gin context in ctx. Empty means unrestricted.
+func AllowedAuthsFromContext(ctx context.Context) []string {
+	if ctx == nil {
+		return nil
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil {
+		return nil
+	}
+	return allowedAuthsFromGin(ginCtx)
+}
+
+func allowedAuthsFromGin(c *gin.Context) []string { return sdkaccess.AllowedAuthsFromGin(c) }
 
 func requestClientIP(request *http.Request) string {
 	if request == nil {
@@ -754,6 +773,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			}
 		}()
 	}
+	h.PublishAllowedAuthIDs(c)
 	newCtx = context.WithValue(newCtx, "gin", c)
 	newCtx = coreusage.CaptureIdentity(newCtx)
 	newCtx = coreauth.WithCodexClientRequest(newCtx, coreauth.IsCodexClientRequest(newCtx))

@@ -28,6 +28,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/turncost"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/gemini"
@@ -92,7 +93,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		v1.POST("/alpha/search", s.codexAlphaSearch)
-		v1.POST("/analytics/codex/turn-costs", turncost.Default().Handler)
+		v1.POST("/analytics/codex/turn-costs", turncost.Default().HandlerScoped(s.turnCostScope))
 		v1.POST("/live", s.codexLiveHandler.Handle)
 		v1.GET("/live/:call_id", s.codexLiveHandler.HandleSideband)
 	}
@@ -723,7 +724,7 @@ func (s *Server) handleGrokModels(c *gin.Context) {
 		}
 		models = grokModelsFromHomeEntries(entries)
 	} else {
-		models = grokModelsFromRegistryInfos(registry.GetGlobalRegistry().GetAvailableModelInfos())
+		models = grokModelsFromRegistryInfos(s.availableModelInfosForRequest(c))
 	}
 	s.writeModelListResponse(c, "openai", grokbuild.BuildResponse(models))
 }
@@ -1192,9 +1193,27 @@ func (s *Server) handleHomeGeminiModel(c *gin.Context) {
 	})
 }
 
+// availableModelInfosForRequest lists model metadata visible to the request's client key.
+func (s *Server) availableModelInfosForRequest(c *gin.Context) []*registry.ModelInfo {
+	modelRegistry := registry.GetGlobalRegistry()
+	refs := sdkaccess.AllowedAuthsFromGin(c)
+	if len(refs) == 0 {
+		return modelRegistry.GetAvailableModelInfos()
+	}
+	if s == nil || s.handlers == nil || s.handlers.AuthManager == nil {
+		return nil
+	}
+	return modelRegistry.GetAvailableModelInfosForClients(s.handlers.AuthManager.AllowedAuthIDs(refs))
+}
+
 func (s *Server) loadHomeModelEntries(c *gin.Context) ([]homeModelEntry, bool) {
 	if s == nil || c == nil || c.Request == nil {
 		return nil, false
+	}
+	if len(sdkaccess.AllowedAuthsFromGin(c)) > 0 {
+		// Home chooses credentials itself and cannot honor a key binding, so a
+		// bound key sees no models, matching the dispatch refusal.
+		return nil, true
 	}
 	client := home.Current()
 	if client == nil {
@@ -1613,4 +1632,18 @@ func homeModelInt64Value(model map[string]any, keys ...string) int64 {
 		}
 	}
 	return 0
+}
+
+// turnCostScope limits the turn-cost endpoint to turns served by the credentials a bound
+// client key may use. Turns outside the binding read as pending, and Home mode, which
+// cannot enforce a binding, exposes none of them.
+func (s *Server) turnCostScope(c *gin.Context) turncost.Scope {
+	refs := sdkaccess.AllowedAuthsFromGin(c)
+	if len(refs) == 0 {
+		return nil
+	}
+	if s == nil || s.handlers == nil || s.handlers.AuthManager == nil || s.handlers.AuthManager.HomeEnabled() {
+		return turncost.AuthIDScope(nil)
+	}
+	return turncost.AuthIDScope(s.handlers.AuthManager.AllowedAuthIDs(refs))
 }

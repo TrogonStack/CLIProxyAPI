@@ -17,6 +17,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
@@ -183,7 +184,37 @@ func prepareCodexMultiAgentV2ToolsDoc(doc *ojson.Doc, ctx context.Context, heade
 		models, formattedMarkdown = codexSpawnAgentModelsAndMarkdownForRequest(ctx, headers, homeEnabled)
 	}
 
-	return rewriteCodexCollaborationToolsDoc(doc, messageToolPaths, toolPaths, models, formattedMarkdown), true
+	stripped := false
+	if len(toolPaths) > 0 && formattedMarkdown == "" {
+		// A bound key with no usable model must not keep the model list the client wrote
+		// into the description: it can name credentials the key may not use.
+		if _, restricted := codexAllowedClients(ctx); restricted {
+			stripped = stripCodexSpawnAgentModels(doc, toolPaths)
+		}
+	}
+	return rewriteCodexCollaborationToolsDoc(doc, messageToolPaths, toolPaths, models, formattedMarkdown) || stripped, true
+}
+
+// stripCodexSpawnAgentModels removes the "Available model overrides" section from every
+// spawn_agent description and keeps the rest of the description.
+func stripCodexSpawnAgentModels(doc *ojson.Doc, toolPaths []string) bool {
+	changed := false
+	for _, toolPath := range toolPaths {
+		descriptionPath := toolPath + ".description"
+		description := doc.Get(descriptionPath)
+		if description.Type != ojson.String {
+			continue
+		}
+		cleaned, _ := removeCodexSpawnAgentModelSections(description.String())
+		if cleaned == description.String() {
+			continue
+		}
+		if errSet := doc.Set(descriptionPath, cleaned); errSet != nil {
+			return changed
+		}
+		changed = true
+	}
+	return changed
 }
 
 // OptimizeCodexMultiAgentV2Request rewrites an eligible spawn_agent request and
@@ -360,7 +391,45 @@ func loadCodexCatalogTemplates() (map[string]map[string]any, map[string]any, uin
 	return templates, defaultTemplate, revision, nil
 }
 
+// codexAllowedClients returns the credentials a restricted client key may use, and whether
+// the request is restricted at all.
+func codexAllowedClients(ctx context.Context) (map[string]struct{}, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil {
+		return nil, false
+	}
+	ids, restricted := sdkaccess.AllowedAuthIDsFromGin(ginCtx)
+	if !restricted {
+		return nil, false
+	}
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set, true
+}
+
 func codexSpawnAgentModelsAndMarkdownForRequest(ctx context.Context, headers http.Header, homeEnabled bool) ([]codexSpawnAgentModel, string) {
+	if allowed, restricted := codexAllowedClients(ctx); restricted {
+		// A key bound to credentials may only be offered the models those credentials
+		// serve. The shared cache holds the global list, so it is bypassed, and Home
+		// mode (which cannot enforce a binding) offers none.
+		templates, defaultTemplate, _, errLoad := loadCodexCatalogTemplates()
+		if errLoad != nil || defaultTemplate == nil {
+			return nil, ""
+		}
+		availableModels := []map[string]any{}
+		if !homeEnabled {
+			availableModels = registry.GetGlobalRegistry().GetAvailableModelsForClients("openai", allowed)
+		}
+		models := codexSpawnAgentModelsFromTemplates(availableModels, templates, defaultTemplate, func(modelID string) *registry.ModelInfo {
+			return registry.LookupModelInfo(modelID)
+		})
+		return models, formatCodexSpawnAgentModels(models)
+	}
 	if homeEnabled {
 		availableModels := codexHomeAvailableModels(ctx, headers)
 		templates, defaultTemplate, _, errLoad := loadCodexCatalogTemplates()

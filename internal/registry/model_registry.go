@@ -1604,6 +1604,161 @@ func (r *ModelRegistry) GetAvailableModels(handlerType string) []map[string]any 
 	return models
 }
 
+// availableRegistrationsForClientsLocked returns the registrations that are available when
+// only the given clients are considered. The caller must hold r.mutex.
+func (r *ModelRegistry) availableRegistrationsForClientsLocked(clientIDs map[string]struct{}, now time.Time) []*ModelRegistration {
+	counts := make(map[string]int)
+	for clientID := range clientIDs {
+		seen := make(map[string]struct{}, len(r.clientModels[clientID]))
+		for _, modelID := range r.clientModels[clientID] {
+			if _, dup := seen[modelID]; dup {
+				continue
+			}
+			seen[modelID] = struct{}{}
+			counts[modelID]++
+		}
+	}
+	out := make([]*ModelRegistration, 0, len(counts))
+	for modelID, count := range counts {
+		registration := r.models[modelID]
+		if registration == nil {
+			continue
+		}
+		info, infoByProvider := r.scopedModelInfoLocked(modelID, clientIDs)
+		if info == nil {
+			// No selected client kept its own metadata; the global entry is the only description.
+			info = registration.Info
+		}
+		scoped := &ModelRegistration{
+			Info:                     info,
+			InfoByProvider:           infoByProvider,
+			Count:                    count,
+			LastUpdated:              registration.LastUpdated,
+			QuotaExceededClients:     filterClientMap(registration.QuotaExceededClients, clientIDs),
+			SuspendedClients:         filterClientMap(registration.SuspendedClients, clientIDs),
+			SuspendedClientDeadlines: filterClientMap(registration.SuspendedClientDeadlines, clientIDs),
+		}
+		if available, _ := modelRegistrationAvailability(scoped, now); available {
+			out = append(out, scoped)
+		}
+	}
+	return out
+}
+
+// scopedModelInfoLocked builds a model's metadata from the selected clients only, so a
+// credential outside the set never shapes what a bound key sees (capabilities, limits,
+// web-search support). The merge is deterministic: the lowest client ID that serves the
+// model supplies Info, and the lowest client ID per provider supplies InfoByProvider.
+// SupportsWebSearch is true when any selected client advertises it. The caller must hold r.mutex.
+func (r *ModelRegistry) scopedModelInfoLocked(modelID string, clientIDs map[string]struct{}) (*ModelInfo, map[string]*ModelInfo) {
+	ids := make([]string, 0, len(clientIDs))
+	for clientID := range clientIDs {
+		if r.clientModelInfos[clientID][modelID] != nil {
+			ids = append(ids, clientID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	sort.Strings(ids)
+	var info *ModelInfo
+	byProvider := make(map[string]*ModelInfo)
+	webSearch := false
+	providerSearch := make(map[string]bool)
+	for _, clientID := range ids {
+		clientInfo := r.clientModelInfos[clientID][modelID]
+		if info == nil {
+			info = cloneModelInfo(clientInfo)
+		}
+		webSearch = webSearch || clientInfo.SupportsWebSearch
+		if provider := r.clientProviders[clientID]; provider != "" {
+			if byProvider[provider] == nil {
+				byProvider[provider] = cloneModelInfo(clientInfo)
+			}
+			providerSearch[provider] = providerSearch[provider] || clientInfo.SupportsWebSearch
+		}
+	}
+	info.SupportsWebSearch = webSearch
+	for provider, providerInfo := range byProvider {
+		providerInfo.SupportsWebSearch = providerSearch[provider]
+	}
+	return info, byProvider
+}
+
+// GetAvailableModelsForClients returns the available models that at least one of the
+// given clients serves, computed only from those clients. It is not cached because the
+// client set varies per API key. An empty set returns no models.
+func (r *ModelRegistry) GetAvailableModelsForClients(handlerType string, clientIDs map[string]struct{}) []map[string]any {
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	registrations := r.availableRegistrationsForClientsLocked(clientIDs, now)
+	models := make([]map[string]any, 0, len(registrations))
+	for _, registration := range registrations {
+		if model := r.convertModelToMap(registration.Info, handlerType); model != nil {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
+// GetAvailableModelInfosForClients is GetAvailableModelInfos limited to the given clients.
+func (r *ModelRegistry) GetAvailableModelInfosForClients(clientIDs map[string]struct{}) []*ModelInfo {
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	registrations := r.availableRegistrationsForClientsLocked(clientIDs, now)
+	result := make([]*ModelInfo, 0, len(registrations))
+	for _, registration := range registrations {
+		if registration.Info != nil {
+			result = append(result, cloneModelInfo(registration.Info))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.TrimSpace(result[i].ID) < strings.TrimSpace(result[j].ID)
+	})
+	return result
+}
+
+// GetAvailableModelInfosByProviderForClients returns, per available model, the per-provider
+// metadata built from the given clients only (model ID -> provider -> info).
+func (r *ModelRegistry) GetAvailableModelInfosByProviderForClients(clientIDs map[string]struct{}) map[string]map[string]*ModelInfo {
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	registrations := r.availableRegistrationsForClientsLocked(clientIDs, now)
+	out := make(map[string]map[string]*ModelInfo, len(registrations))
+	for _, registration := range registrations {
+		if registration.Info == nil || len(registration.InfoByProvider) == 0 {
+			continue
+		}
+		providers := make(map[string]*ModelInfo, len(registration.InfoByProvider))
+		for provider, info := range registration.InfoByProvider {
+			if info != nil {
+				providers[provider] = cloneModelInfo(info)
+			}
+		}
+		out[registration.Info.ID] = providers
+	}
+	return out
+}
+
+func filterClientMap[V any](in map[string]V, keep map[string]struct{}) map[string]V {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]V, len(in))
+	for clientID, value := range in {
+		if _, ok := keep[clientID]; ok {
+			out[clientID] = value
+		}
+	}
+	return out
+}
+
 // isQuotaSuspension reports whether a suspension is a quota cooldown. A model in a
 // quota cooldown stays listed: the limit is temporary, and a request meanwhile gets a
 // 429 with its retry time instead of an unknown model. A credential-wide quota

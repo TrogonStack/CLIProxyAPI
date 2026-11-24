@@ -19,6 +19,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -978,6 +979,9 @@ func (h *OpenAIAPIHandler) videoContentDownloadAuth(c *gin.Context) *coreauth.Au
 	}
 	auth, ok := h.AuthManager.GetByID(authID)
 	if !ok {
+		return nil
+	}
+	if !coreauth.AuthAllowedByRefs(auth, sdkaccess.AllowedAuthsFromGin(c)) {
 		return nil
 	}
 	return auth

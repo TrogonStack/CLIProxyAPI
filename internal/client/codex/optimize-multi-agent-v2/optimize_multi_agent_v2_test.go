@@ -12,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
@@ -1229,5 +1230,77 @@ func BenchmarkOptimizeCodexMultiAgentV2Request(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		OptimizeCodexMultiAgentV2Request(ctx, headers, payload, cfg)
+	}
+}
+
+func TestCodexSpawnAgentModelsAreScopedToBoundKey(t *testing.T) {
+	modelRegistry := registry.GetGlobalRegistry()
+	for id, model := range map[string]string{"bound-spawn-client-a": "bound-spawn-model-a", "bound-spawn-client-b": "bound-spawn-model-b"} {
+		modelRegistry.RegisterClient(id, "openai", []*registry.ModelInfo{{ID: model, DisplayName: model}})
+		t.Cleanup(func() { modelRegistry.UnregisterClient(id) })
+	}
+	requestCtx := func(refs []string, ids []string) context.Context {
+		ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		if refs != nil {
+			ginCtx.Set(sdkaccess.AllowedAuthsContextKey, refs)
+		}
+		if ids != nil {
+			ginCtx.Set(sdkaccess.AllowedAuthIDsContextKey, ids)
+		}
+		return context.WithValue(context.Background(), "gin", ginCtx)
+	}
+
+	// Warm the shared cache with the global list, which a bound key must never be served.
+	if all := formatCodexSpawnAgentModelsForRequest(context.Background(), nil, false); !strings.Contains(all, "bound-spawn-model-a") || !strings.Contains(all, "bound-spawn-model-b") {
+		t.Fatalf("unrestricted list = %s", all)
+	}
+	bound := formatCodexSpawnAgentModelsForRequest(requestCtx([]string{"a.json"}, []string{"bound-spawn-client-a"}), nil, false)
+	if !strings.Contains(bound, "bound-spawn-model-a") || strings.Contains(bound, "bound-spawn-model-b") {
+		t.Fatalf("bound list = %s, want only model a", bound)
+	}
+	// Restricted but nothing resolved, or IDs never published, must offer nothing.
+	for name, ctx := range map[string]context.Context{
+		"no credentials resolved": requestCtx([]string{"missing.json"}, []string{}),
+		"ids never published":     requestCtx([]string{"a.json"}, nil),
+	} {
+		if got := formatCodexSpawnAgentModelsForRequest(ctx, nil, false); strings.Contains(got, "bound-spawn-model") {
+			t.Fatalf("%s: list = %s, want no bound-spawn models", name, got)
+		}
+	}
+	// Home mode cannot enforce a binding.
+	if got := formatCodexSpawnAgentModelsForRequest(requestCtx([]string{"a.json"}, []string{"bound-spawn-client-a"}), nil, true); strings.Contains(got, "bound-spawn-model") {
+		t.Fatalf("home list = %s, want none", got)
+	}
+	// The bound request must not poison the cache for unrestricted callers.
+	if all := formatCodexSpawnAgentModelsForRequest(context.Background(), nil, false); !strings.Contains(all, "bound-spawn-model-b") {
+		t.Fatalf("unrestricted list after a bound request = %s", all)
+	}
+}
+
+func TestPrepareCodexMultiAgentV2ToolsDropsModelListForBoundKeyWithNoModels(t *testing.T) {
+	payload := []byte(`{"tools":[{"type":"namespace","name":"collaboration","tools":[` +
+		`{"type":"function","name":"spawn_agent","description":"Intro line.\n` + codexSpawnAgentModelsHeading + `\n- ` + "`excluded-model`" + `: not yours.\nSpawns an agent.","parameters":{"type":"object"}}]}]}`)
+	headers := http.Header{"User-Agent": []string{"codex_cli_rs/0.144.1"}}
+	bound := func(ids []string) context.Context {
+		ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ginCtx.Set(sdkaccess.AllowedAuthsContextKey, []string{"nothing.json"})
+		ginCtx.Set(sdkaccess.AllowedAuthIDsContextKey, ids)
+		return context.WithValue(context.Background(), "gin", ginCtx)
+	}
+	for name, ctx := range map[string]context.Context{
+		"no credentials resolved": bound([]string{}),
+		"ids never published":     bound(nil),
+	} {
+		got, prepared := PrepareCodexMultiAgentV2Tools(ctx, headers, payload, true, false)
+		if !prepared {
+			t.Fatalf("%s: request was not prepared", name)
+		}
+		description := ojson.GetBytesNoCopy(got, "tools.0.tools.0.description").String()
+		if strings.Contains(description, "excluded-model") || strings.Contains(description, codexSpawnAgentModelsHeading) {
+			t.Fatalf("%s: description still lists models: %q", name, description)
+		}
+		if !strings.Contains(description, "Intro line.") || !strings.Contains(description, "Spawns an agent.") {
+			t.Fatalf("%s: description lost its remaining text: %q", name, description)
+		}
 	}
 }

@@ -24,6 +24,10 @@ const TraceIDMetadataKey = "trace_id"
 // DisallowFreeAuthMetadataKey instructs auth selection to skip known free-tier credentials.
 const DisallowFreeAuthMetadataKey = "disallow_free_auth"
 
+// AllowedAuthsMetadataKey restricts auth selection to the listed credentials. Each item
+// matches a credential ID or file name. Missing or empty means no restriction.
+const AllowedAuthsMetadataKey = "allowed_auths"
+
 // AuthSelectionModelMetadataKey overrides the model used only for auth selection.
 const AuthSelectionModelMetadataKey = "auth_selection_model"
 
