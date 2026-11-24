@@ -2,6 +2,7 @@ package management
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -162,27 +163,72 @@ func (h *Handler) PutAPIKeys(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "failed to read body"})
 		return
 	}
-	var arr []string
-	if err = json.Unmarshal(data, &arr); err != nil {
-		var obj struct {
-			Items []string `json:"items"`
-		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
-			c.JSON(400, gin.H{"error": "invalid body"})
-			return
-		}
-		arr = obj.Items
+	items, err := parseAPIKeyItems(data)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// A plain string keeps the binding the key already has, so a list of bare keys can
+	// never widen a bound key. An object states its binding explicitly.
+	bindings := make(map[string][]string, len(h.cfg.APIKeys))
+	for _, entry := range h.cfg.APIKeys {
+		if entry.Bound() {
+			bindings[strings.TrimSpace(entry.Key)] = entry.Auths
+		}
+	}
 	var next config.SDKConfig
-	next.APIKeys = append([]config.APIKeyEntry(nil), h.cfg.APIKeys...)
-	next.SetAPIKeyStrings(arr)
+	next.APIKeys = make([]config.APIKeyEntry, 0, len(items))
+	for _, item := range items {
+		entry := item.entry
+		if item.plain {
+			entry.Auths = bindings[strings.TrimSpace(entry.Key)]
+		}
+		next.APIKeys = append(next.APIKeys, entry)
+	}
 	if rejectInvalidAPIKeys(c, &next) {
 		return
 	}
 	h.cfg.APIKeys = next.APIKeys
 	h.persistLocked(c)
+}
+
+type apiKeyItem struct {
+	entry config.APIKeyEntry
+	plain bool
+}
+
+// parseAPIKeyItems reads the body GetAPIKeys writes: a bare array, {"items": [...]} or the {"api-keys": [...]} object GetAPIKeys
+// returns,
+// whose elements are plain key strings or {key, auths} objects.
+func parseAPIKeyItems(data []byte) ([]apiKeyItem, error) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(data, &raws); err != nil {
+		var obj struct {
+			Items   []json.RawMessage `json:"items"`
+			APIKeys []json.RawMessage `json:"api-keys"`
+		}
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
+			return nil, errors.New("invalid body")
+		}
+		raws = obj.Items
+		if len(raws) == 0 {
+			raws = obj.APIKeys
+		}
+		if len(raws) == 0 {
+			return nil, errors.New("invalid body")
+		}
+	}
+	items := make([]apiKeyItem, 0, len(raws))
+	for i, raw := range raws {
+		var entry config.APIKeyEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, fmt.Errorf("api-keys[%d]: %w", i, err)
+		}
+		items = append(items, apiKeyItem{entry: entry, plain: strings.HasPrefix(strings.TrimSpace(string(raw)), `"`)})
+	}
+	return items, nil
 }
 
 // PatchAPIKeys renames or appends one key. A rename keeps the credential binding of

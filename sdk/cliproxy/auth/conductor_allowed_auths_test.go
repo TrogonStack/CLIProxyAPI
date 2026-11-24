@@ -226,6 +226,61 @@ func TestAllowedAuthsFallbackReadsGinContext(t *testing.T) {
 	}
 }
 
+// The Codex alpha-search and realtime paths select a credential directly, with nothing but
+// the gin request in ctx. The key's restriction must still bound that selection.
+func TestAllowedAuthsGinOnlyContextBoundsDirectSelection(t *testing.T) {
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.executors["codex"] = schedulerTestExecutor{}
+	for _, id := range []string{"alpha-a", "alpha-b"} {
+		if _, errRegister := manager.Register(WithSkipPersist(context.Background()), &Auth{
+			ID: id, FileName: id + ".json", Provider: "codex", Status: StatusActive,
+			Attributes: map[string]string{AttributeAPIKey: id, AttributeCodexAlphaSearch: "true", "base_url": "https://codex.example.com"},
+		}); errRegister != nil {
+			t.Fatalf("Register(%s) error = %v", id, errRegister)
+		}
+	}
+	ginCtx := func(restriction any) context.Context {
+		gc, _ := gin.CreateTestContext(nil)
+		if restriction != nil {
+			gc.Set(sdkaccess.AllowedAuthsContextKey, restriction)
+		}
+		return context.WithValue(context.Background(), "gin", gc)
+	}
+	pick := func(ctx context.Context) (string, error) {
+		selected, err := manager.SelectAuthWithCredentialPolicy(ctx, "codex", "", CredentialPolicyCodexAlphaSearchV1, cliproxyexecutor.Options{})
+		if err != nil {
+			return "", err
+		}
+		return selected.ID, nil
+	}
+
+	bound := ginCtx([]string{"alpha-b.json"})
+	for i := range 6 {
+		if got, err := pick(bound); err != nil || got != "alpha-b" {
+			t.Fatalf("pick %d = %q, %v; want alpha-b only", i, got, err)
+		}
+	}
+	// Control: without a restriction the same pool rotates over both credentials.
+	seen := map[string]bool{}
+	open := ginCtx(nil)
+	for range 6 {
+		got, err := pick(open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[got] = true
+	}
+	if !seen["alpha-a"] || !seen["alpha-b"] {
+		t.Fatalf("unrestricted pool served by %v, want both", seen)
+	}
+	if got, err := pick(ginCtx([]string{"missing.json"})); err == nil {
+		t.Fatalf("a key bound to a missing credential selected %q", got)
+	}
+	if got, err := pick(ginCtx("unreadable")); err == nil {
+		t.Fatalf("an unreadable restriction selected %q", got)
+	}
+}
+
 func TestAuthAllowedByRefs(t *testing.T) {
 	auth := &Auth{ID: "id-1", FileName: "team/work.json"}
 	for refs, want := range map[string]bool{"": true, "id-1": true, "team/work.json": true, " team/work.json ": true, "work.json": false, "other": false} {
