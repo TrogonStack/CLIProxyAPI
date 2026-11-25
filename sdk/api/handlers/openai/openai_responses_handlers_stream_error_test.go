@@ -524,14 +524,14 @@ func TestForwardResponsesStreamExposesTerminalErrors(t *testing.T) {
 
 			h.forwardResponsesStream(c, flusher, func(error) {}, data, errs, nil)
 			body := recorder.Body.String()
-			exposed := strings.Contains(body, `"type":"error"`)
+			exposed := strings.Contains(body, `"type":"response.failed"`)
 			if exposed != tc.wantExposed {
 				t.Fatalf("error exposed = %t, want %t: %q", exposed, tc.wantExposed, body)
 			}
-			if exposed && !strings.Contains(body, "event: error\ndata: ") {
+			if exposed && !strings.Contains(body, "event: response.failed\ndata: ") {
 				t.Fatalf("expected streaming error chunk, got HTTP error body: %q", body)
 			}
-			if exposed && !strings.Contains(body, `"error":{`) {
+			if exposed && !strings.Contains(body, `"status":"failed"`) {
 				t.Fatalf("expected nested error in streaming error chunk, got: %q", body)
 			}
 		})

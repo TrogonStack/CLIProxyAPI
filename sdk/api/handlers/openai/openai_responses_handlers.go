@@ -1173,11 +1173,7 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	defer stopWaitKeepAlive()
 
 	isCodexClient := isCodexResponsesClientRequest(c)
-	failureEvent := "error"
-	if isCodexClient {
-		failureEvent = "response.failed"
-	}
-	framer := &responsesSSEFramer{failureEvent: failureEvent, isCodexClient: isCodexClient, canComplete: func() bool { return usage.StreamDeliverySupported(cliCtx) }}
+	framer := &responsesSSEFramer{failureEvent: "response.failed", isCodexClient: isCodexClient, canComplete: func() bool { return usage.StreamDeliverySupported(cliCtx) }}
 	var initialOutput bytes.Buffer
 
 	// Peek at the first complete SSE data frame.
@@ -1511,13 +1507,11 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 	if framer == nil {
 		framer = &responsesSSEFramer{}
 	}
-	if isCodexResponsesClientRequest(c) {
-		framer.failureEvent = "response.failed"
-		framer.isCodexClient = true
-	} else {
-		framer.failureEvent = "error"
-		framer.isCodexClient = false
-	}
+	// A failure after the stream has started is reported as response.failed for
+	// every client, as the OpenAI Responses API does; clients that only parse the
+	// terminal events (Codex) otherwise ignore it and see a bare disconnect.
+	framer.failureEvent = "response.failed"
+	framer.isCodexClient = isCodexResponsesClientRequest(c)
 	// Initial frames have already been written and flushed by the caller.
 	if framer.writeErr != nil {
 		cancel(framer.writeErr)
@@ -1551,13 +1545,8 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 		if origSeq := ojson.Get(errText, "sequence_number"); origSeq.Exists() {
 			seq = int(origSeq.Int())
 		}
-		if isCodexResponsesClientRequest(c) {
-			chunk := handlers.BuildOpenAIResponsesStreamFailedChunk(status, errText, seq)
-			_, _ = fmt.Fprintf(c.Writer, "\nevent: response.failed\ndata: %s\n\n", string(chunk))
-			return
-		}
-		chunk := handlers.BuildOpenAIResponsesStreamErrorChunk(status, errText, seq)
-		_, _ = fmt.Fprintf(c.Writer, "\nevent: error\ndata: %s\n\n", string(chunk))
+		chunk := handlers.BuildOpenAIResponsesStreamFailedChunk(status, errText, seq)
+		_, _ = fmt.Fprintf(c.Writer, "\nevent: response.failed\ndata: %s\n\n", string(chunk))
 	}
 
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{

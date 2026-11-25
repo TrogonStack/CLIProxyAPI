@@ -317,7 +317,7 @@ func TestForwardResponsesStreamReassemblesSplitSSEEventChunks(t *testing.T) {
 	if !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("unexpected split-event framing.\nGot:        %q\nWant prefix: %q", got, wantPrefix)
 	}
-	if !strings.Contains(got, "event: error") {
+	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unterminated framing test stream did not end with an error: %q", got)
 	}
 }
@@ -338,7 +338,7 @@ func TestForwardResponsesStreamPreservesValidFullSSEEventChunks(t *testing.T) {
 	if !strings.HasPrefix(got, string(chunk)) {
 		t.Fatalf("unexpected full-event framing.\nGot:        %q\nWant prefix: %q", got, string(chunk))
 	}
-	if !strings.Contains(got, "event: error") {
+	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unterminated framing test stream did not end with an error: %q", got)
 	}
 }
@@ -360,7 +360,7 @@ func TestForwardResponsesStreamBuffersSplitDataPayloadChunks(t *testing.T) {
 	if !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("unexpected split-data framing.\nGot:        %q\nWant prefix: %q", got, wantPrefix)
 	}
-	if !strings.Contains(got, "event: error") {
+	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unterminated framing test stream did not end with an error: %q", got)
 	}
 }
@@ -389,7 +389,7 @@ func TestForwardResponsesStreamDropsIncompleteTrailingDataChunkOnFlush(t *testin
 	if strings.Contains(got, `data: {"type":"response.created"`) {
 		t.Fatalf("incomplete trailing data was not dropped on flush: %q", got)
 	}
-	if !strings.Contains(got, "event: error") {
+	if !strings.Contains(got, "event: response.failed") {
 		t.Fatalf("unterminated framing test stream did not end with an error: %q", got)
 	}
 }
@@ -418,8 +418,8 @@ func TestForwardResponsesStreamErrorEventPreservesNestedError(t *testing.T) {
 	h.forwardResponsesStream(c, flusher, func(error) {}, data, errs, framer)
 
 	body := recorder.Body.String()
-	if !strings.Contains(body, "event: error\n") {
-		t.Fatalf("expected event: error in output, got: %q", body)
+	if !strings.Contains(body, "event: response.failed\n") {
+		t.Fatalf("expected event: response.failed in output, got: %q", body)
 	}
 
 	parts := strings.Split(strings.TrimSpace(body), "\n\n")
@@ -428,32 +428,35 @@ func TestForwardResponsesStreamErrorEventPreservesNestedError(t *testing.T) {
 	}
 
 	lastPart := strings.TrimSpace(parts[len(parts)-1])
-	if !strings.HasPrefix(lastPart, "event: error\ndata: ") {
+	if !strings.HasPrefix(lastPart, "event: response.failed\ndata: ") {
 		t.Fatalf("last event is not error event: %q", lastPart)
 	}
 
-	jsonPayload := strings.TrimSpace(strings.TrimPrefix(lastPart, "event: error\ndata: "))
+	jsonPayload := strings.TrimSpace(strings.TrimPrefix(lastPart, "event: response.failed\ndata: "))
 	var payload struct {
-		Type           string         `json:"type"`
-		Error          map[string]any `json:"error"`
-		SequenceNumber int            `json:"sequence_number"`
+		Type           string `json:"type"`
+		SequenceNumber int    `json:"sequence_number"`
+		Response       struct {
+			Status string         `json:"status"`
+			Error  map[string]any `json:"error"`
+		} `json:"response"`
 	}
 	if errUnmarshal := json.Unmarshal([]byte(jsonPayload), &payload); errUnmarshal != nil {
 		t.Fatalf("unmarshal error event payload: %v (raw: %s)", errUnmarshal, jsonPayload)
 	}
-	if payload.Type != "error" {
-		t.Fatalf("payload.Type = %q, want error", payload.Type)
+	if payload.Type != "response.failed" {
+		t.Fatalf("payload.Type = %q, want response.failed", payload.Type)
 	}
 	if payload.SequenceNumber != 2 {
 		t.Fatalf("payload.SequenceNumber = %d, want 2", payload.SequenceNumber)
 	}
-	if payload.Error["type"] != "invalid_request" {
-		t.Fatalf("payload.Error.type = %v, want invalid_request", payload.Error["type"])
+	if payload.Response.Error["type"] != "invalid_request" {
+		t.Fatalf("payload.Error.type = %v, want invalid_request", payload.Response.Error["type"])
 	}
-	if payload.Error["code"] != "cyber_policy" {
-		t.Fatalf("payload.Error.code = %v, want cyber_policy", payload.Error["code"])
+	if payload.Response.Error["code"] != "cyber_policy" {
+		t.Fatalf("payload.Error.code = %v, want cyber_policy", payload.Response.Error["code"])
 	}
-	if param, exists := payload.Error["param"]; !exists || param != nil {
+	if param, exists := payload.Response.Error["param"]; !exists || param != nil {
 		t.Fatalf("payload.Error.param = %v, want null/nil", param)
 	}
 }
@@ -524,7 +527,7 @@ func TestForwardResponsesStreamErrorEventPreservesExplicitSequenceNumber(t *test
 		Error          map[string]any `json:"error"`
 	}
 	lastPart := strings.TrimSpace(strings.Split(strings.TrimSpace(body), "\n\n")[0])
-	payload := strings.TrimSpace(strings.TrimPrefix(lastPart, "event: error\ndata: "))
+	payload := strings.TrimSpace(strings.TrimPrefix(lastPart, "event: response.failed\ndata: "))
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {
 		t.Fatalf("unmarshal error payload: %v (raw: %s)", err, payload)
 	}
