@@ -210,6 +210,10 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		return nil, err
 	}
 
+	if e.codexResponsesPassthroughEligible(from, responseFormat, buffering, isGrokClient) {
+		return e.streamCodexPassthrough(ctx, httpResp, reporter, replayScope, body), nil
+	}
+
 	bufferedFrames := 0
 	bufferedBytes := 0
 	budgetExhausted := false

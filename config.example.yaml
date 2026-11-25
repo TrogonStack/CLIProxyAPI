@@ -527,6 +527,12 @@ upstream:
     # proxy_read_timeout, is what bounds them.
     # Default: false
     stream-bootstrap-buffering: false
+    # Forward the Codex upstream SSE bytes of /v1/responses streams to the client unchanged when no
+    # format translation is needed. Upstream errors that arrive mid-stream reach the client exactly as
+    # OpenAI sent them. Skips the output patching, multi-agent restoration, and error reshaping that
+    # the default path applies. Ignored while stream-bootstrap-buffering is on.
+    # Default: false
+    responses-passthrough: false
     # Optional maximum duration to hold back uncommitted response headers during bootstrap buffering.
     # When set (e.g. "20s"), if the time ceiling is reached before the first generated token,
     # the stream is released to the client and further in-stream overloads are delivered rather
