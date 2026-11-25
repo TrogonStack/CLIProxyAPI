@@ -527,6 +527,13 @@ upstream:
     # proxy_read_timeout, is what bounds them.
     # Default: false
     stream-bootstrap-buffering: false
+    # Forward the Codex upstream SSE bytes of same-format /v1/responses streams to the client unchanged.
+    # Opt-in, three layers, first match wins: a per-account setting (responses-passthrough on a
+    # codex-api-key entry, or "responses_passthrough" in a Codex auth file), then the environment
+    # variable CLIPROXY_CODEX_RESPONSES_PASSTHROUGH, then this key. Skips output patching, multi-agent
+    # restoration and error reshaping. Ignored while stream-bootstrap-buffering is on.
+    # Default: false
+    responses-passthrough: false
     # Optional maximum duration to hold back uncommitted response headers during bootstrap buffering.
     # When set (e.g. "20s"), if the time ceiling is reached before the first generated token,
     # the stream is released to the client and further in-stream overloads are delivered rather
@@ -856,6 +863,7 @@ upstream:
 #           disable-codex-cloaking: false # optional: true disables cloaking; OAuth provider settings do not apply here
 #           alpha-search: false # optional: allow this key to serve /v1/alpha/search via base-url + /alpha/search
 #           websockets: false # optional: use the Codex upstream WebSocket transport
+#           responses-passthrough: false # optional: true forwards /v1/responses SSE bytes unchanged for this key, false opts out; omitted inherits CLIPROXY_CODEX_RESPONSES_PASSTHROUGH
 #
 #   # Claude API keys
 #

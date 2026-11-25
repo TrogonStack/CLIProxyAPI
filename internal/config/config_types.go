@@ -335,6 +335,11 @@ type CodexConfig struct {
 	UpstreamRequestCompressionMinBytes int `yaml:"upstream-request-compression-min-bytes,omitempty" json:"upstream-request-compression-min-bytes,omitempty"`
 	// DisableCodexCloaking disables forcing the official Codex identity headers on HTTP/SSE and WebSocket requests.
 	DisableCodexCloaking bool `yaml:"disable-codex-cloaking" json:"disable-codex-cloaking"`
+	// ResponsesPassthrough opts every Codex account in to forwarding the upstream SSE bytes of
+	// /v1/responses streams unchanged when no translation is needed. The CLIPROXY_CODEX_RESPONSES_PASSTHROUGH
+	// environment variable overrides it and a per-account setting overrides both. Default is false.
+	ResponsesPassthrough bool `yaml:"responses-passthrough" json:"responses-passthrough"`
+
 	// StreamBootstrapBuffering holds back the frames that arrive before generation starts, none of
 	// which the client has seen anything from - the handshake (response.created, response.in_progress,
 	// the websocket metadata frames), keepalive heartbeats, and the *.added announcements of an item
@@ -973,6 +978,10 @@ type CodexKey struct {
 	// DisableCodexCloaking optionally overrides the global codex.disable-codex-cloaking for this credential.
 	// True disables cloaking; false explicitly enables cloaking; omitted inherits global codex.disable-codex-cloaking.
 	DisableCodexCloaking *bool `yaml:"disable-codex-cloaking,omitempty" json:"disable-codex-cloaking,omitempty"`
+
+	// ResponsesPassthrough opts this credential in (true) or out (false) of forwarding the Codex SSE bytes of
+	// /v1/responses streams unchanged. Omitted inherits the CLIPROXY_CODEX_RESPONSES_PASSTHROUGH env var.
+	ResponsesPassthrough *bool `yaml:"responses-passthrough,omitempty" json:"responses-passthrough,omitempty"`
 
 	// RequestRetry optionally overrides the global request-retry for this credential.
 	// Nil or a negative value means "use the global request-retry". 0 disables additional retry rounds.

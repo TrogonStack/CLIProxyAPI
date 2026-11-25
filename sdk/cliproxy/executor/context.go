@@ -187,3 +187,33 @@ func NotifyContinuityWaitEnd(ctx context.Context) {
 		observer.OnContinuityWaitEnd()
 	}
 }
+
+type streamPassthroughContextKey struct{}
+
+// StreamPassthrough lets an executor tell the HTTP handler that the chunks of the stream it
+// returned are upstream SSE lines to forward verbatim, with no re-framing or error reshaping.
+type StreamPassthrough struct {
+	on atomic.Bool
+}
+
+// Enabled reports whether the executor marked the stream as pass-through.
+func (p *StreamPassthrough) Enabled() bool { return p != nil && p.on.Load() }
+
+// WithStreamPassthrough returns a context carrying a marker the executor can set.
+func WithStreamPassthrough(ctx context.Context) (context.Context, *StreamPassthrough) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	marker := &StreamPassthrough{}
+	return context.WithValue(ctx, streamPassthroughContextKey{}, marker), marker
+}
+
+// MarkStreamPassthrough marks the stream of the current request as pass-through.
+func MarkStreamPassthrough(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	if marker, ok := ctx.Value(streamPassthroughContextKey{}).(*StreamPassthrough); ok && marker != nil {
+		marker.on.Store(true)
+	}
+}

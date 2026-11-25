@@ -328,6 +328,9 @@ func (s *ConfigSynthesizer) synthesizeCodexStyleKeys(ctx *SynthesisContext, entr
 		if provider == "codex" && entry.AlphaSearch {
 			attrs[coreauth.AttributeCodexAlphaSearch] = "true"
 		}
+		if provider == "codex" && entry.ResponsesPassthrough != nil {
+			attrs[coreauth.AttributeCodexResponsesPassthrough] = strconv.FormatBool(*entry.ResponsesPassthrough)
+		}
 		if provider == "codex" && entry.DisableCodexCloaking != nil {
 			attrs[coreauth.AttributeCodexDisableCloaking] = strconv.FormatBool(*entry.DisableCodexCloaking)
 		}

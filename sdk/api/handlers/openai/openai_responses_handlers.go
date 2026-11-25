@@ -28,6 +28,7 @@ import (
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
@@ -1127,6 +1128,7 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	deliveryCtx, finishDelivery := usage.WithStreamDelivery(context.Background())
 	defer finishDelivery(context.Canceled)
 	cliCtx, cancelExecution := h.GetContextWithCancel(h, c, deliveryCtx)
+	cliCtx, passthrough := coreexecutor.WithStreamPassthrough(cliCtx)
 	cliCancel := func(err error) {
 		finishDelivery(err)
 		cancelExecution(err)
@@ -1278,6 +1280,15 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 				} else {
 					cliCancel(nil)
 				}
+				return
+			}
+
+			if passthrough.Enabled() {
+				// The executor marked this stream as verbatim upstream SSE: skip the framer.
+				stopKeepAlive()
+				stopWaitKeepAlive()
+				commitSSE()
+				h.forwardResponsesPassthrough(c, func(err error) { cliCancel(err) }, chunk, dataChan, errChan)
 				return
 			}
 
@@ -1593,4 +1604,60 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 			_, _ = c.Writer.Write([]byte("\n"))
 		},
 	})
+}
+
+// forwardResponsesPassthrough writes executor chunks to the client exactly as received. Each chunk is
+// one upstream SSE event with its separator, so nothing is parsed, repaired, filtered or
+// renumbered. An error reported by the executor after bytes were forwarded only ends the stream
+// (the upstream already put its own error event on the wire) and is logged.
+func (h *OpenAIResponsesAPIHandler) forwardResponsesPassthrough(c *gin.Context, cancel func(error), first []byte, data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
+	atFrameBoundary := true
+	write := func(chunk []byte) bool {
+		if len(chunk) == 0 {
+			return true
+		}
+		if n, errWrite := c.Writer.Write(chunk); errWrite != nil {
+			cancel(errWrite)
+			return false
+		} else if n != len(chunk) {
+			cancel(io.ErrShortWrite)
+			return false
+		}
+		atFrameBoundary = bytes.HasSuffix(chunk, []byte("\n\n"))
+		if errFlush := flushResponsesSSE(c.Writer); errFlush != nil {
+			cancel(errFlush)
+			return false
+		}
+		return true
+	}
+	finish := func(errMsg *interfaces.ErrorMessage) {
+		if !atFrameBoundary {
+			_ = write([]byte("\n"))
+		}
+		if errMsg != nil {
+			h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
+			cancel(errMsg.Error)
+			return
+		}
+		cancel(nil)
+	}
+	if !write(first) {
+		return
+	}
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			cancel(c.Request.Context().Err())
+			return
+		case chunk, ok := <-data:
+			if !ok {
+				errMsg, _ := handlers.PendingStreamError(errs)
+				finish(errMsg)
+				return
+			}
+			if !write(chunk) {
+				return
+			}
+		}
+	}
 }
