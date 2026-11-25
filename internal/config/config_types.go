@@ -360,11 +360,6 @@ type CodexConfig struct {
 	// When set (e.g. "20s"), the stream is released once the time ceiling is reached, avoiding
 	// reverse-proxy timeouts (e.g. Nginx 60s proxy_read_timeout).
 	StreamBootstrapTimeout string `yaml:"stream-bootstrap-timeout,omitempty" json:"stream-bootstrap-timeout,omitempty"`
-	// ResponsesPassthrough forwards the Codex upstream SSE bytes of a /v1/responses stream to the
-	// client unchanged when no format translation is needed, instead of decoding and re-encoding
-	// them. Upstream errors that arrive mid-stream then reach the client exactly as sent. Applies
-	// to the HTTP/SSE transport with stream-bootstrap-buffering off. Default is false.
-	ResponsesPassthrough bool `yaml:"responses-passthrough" json:"responses-passthrough"`
 	// OrphanDelegationCompatibility enables opt-in compatibility for orphan Codex delegation outputs.
 	OrphanDelegationCompatibility bool `yaml:"orphan-delegation-compatibility" json:"orphan-delegation-compatibility"`
 	// ModelLevelCooling scopes Codex usage_limit_reached quota cooldowns to the requested model
@@ -978,6 +973,10 @@ type CodexKey struct {
 	// DisableCodexCloaking optionally overrides the global codex.disable-codex-cloaking for this credential.
 	// True disables cloaking; false explicitly enables cloaking; omitted inherits global codex.disable-codex-cloaking.
 	DisableCodexCloaking *bool `yaml:"disable-codex-cloaking,omitempty" json:"disable-codex-cloaking,omitempty"`
+
+	// ResponsesPassthrough opts this credential in (true) or out (false) of forwarding the Codex SSE bytes of
+	// /v1/responses streams unchanged. Omitted inherits the CLIPROXY_CODEX_RESPONSES_PASSTHROUGH env var.
+	ResponsesPassthrough *bool `yaml:"responses-passthrough,omitempty" json:"responses-passthrough,omitempty"`
 
 	// RequestRetry optionally overrides the global request-retry for this credential.
 	// Nil or a negative value means "use the global request-retry". 0 disables additional retry rounds.

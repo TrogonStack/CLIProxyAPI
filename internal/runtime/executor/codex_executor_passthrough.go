@@ -4,20 +4,55 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
 )
 
+// codexResponsesPassthroughEnv is the global opt-in. A per-account setting overrides it in either direction.
+const codexResponsesPassthroughEnv = "CLIPROXY_CODEX_RESPONSES_PASSTHROUGH"
+
+// codexResponsesPassthroughEnabled resolves the opt-in: the per-account setting wins when it is set
+// (credential attribute from a config key, then auth file metadata), otherwise the environment
+// variable applies, otherwise pass-through is off.
+func codexResponsesPassthroughEnabled(auth *cliproxyauth.Auth) bool {
+	if auth != nil {
+		if raw := strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeCodexResponsesPassthrough]); raw != "" {
+			if parsed, errParse := strconv.ParseBool(raw); errParse == nil {
+				return parsed
+			}
+		}
+		switch v := auth.Metadata["responses_passthrough"].(type) {
+		case bool:
+			return v
+		case string:
+			if parsed, errParse := strconv.ParseBool(strings.TrimSpace(v)); errParse == nil {
+				return parsed
+			}
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv(codexResponsesPassthroughEnv)); raw != "" {
+		if parsed, errParse := strconv.ParseBool(raw); errParse == nil {
+			return parsed
+		}
+	}
+	return false
+}
+
 // codexResponsesPassthroughEligible reports whether an HTTP/SSE Codex stream may be forwarded to
-// the client byte for byte: the flag is on, no translation is needed in either direction, and no
+// the client byte for byte: the account opted in, no translation is needed in either direction, and no
 // feature that has to hold or rewrite frames (bootstrap buffering, Grok keepalive rewriting) is active.
-func (e *CodexExecutor) codexResponsesPassthroughEligible(from, responseFormat sdktranslator.Format, buffering, isGrokClient bool) bool {
-	return e.cfg != nil && e.cfg.Codex.ResponsesPassthrough && !buffering && !isGrokClient &&
-		from == sdktranslator.FormatOpenAIResponse && responseFormat == sdktranslator.FormatOpenAIResponse
+func (e *CodexExecutor) codexResponsesPassthroughEligible(auth *cliproxyauth.Auth, from, responseFormat sdktranslator.Format, buffering, isGrokClient bool) bool {
+	return !buffering && !isGrokClient &&
+		from == sdktranslator.FormatOpenAIResponse && responseFormat == sdktranslator.FormatOpenAIResponse &&
+		codexResponsesPassthroughEnabled(auth)
 }
 
 // streamCodexPassthrough forwards upstream SSE lines unchanged. Every chunk is one whole SSE event

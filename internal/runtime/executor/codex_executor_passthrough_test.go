@@ -31,9 +31,11 @@ func runCodexPassthrough(t *testing.T, enabled bool) (string, error, bool) {
 	defer server.Close()
 
 	cfg := &config.Config{}
-	cfg.Codex.ResponsesPassthrough = enabled
 	exec := NewCodexExecutor(cfg)
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
+	if enabled {
+		auth.Attributes[cliproxyauth.AttributeCodexResponsesPassthrough] = "true"
+	}
 	ctx, marker := cliproxyexecutor.WithStreamPassthrough(context.Background())
 	res, err := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
 		Model:   "gpt-5.4",
@@ -90,9 +92,8 @@ func TestCodexExecutorStreamPassthroughForwardsCompletionVerbatim(t *testing.T) 
 	defer server.Close()
 
 	cfg := &config.Config{}
-	cfg.Codex.ResponsesPassthrough = true
 	exec := NewCodexExecutor(cfg)
-	auth := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "api_key": "test", cliproxyauth.AttributeCodexResponsesPassthrough: "true"}}
 	res, err := exec.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
 		Model:   "gpt-5.4",
 		Payload: []byte(`{"model":"gpt-5.4","input":"hi","stream":true}`),
@@ -109,5 +110,44 @@ func TestCodexExecutorStreamPassthroughForwardsCompletionVerbatim(t *testing.T) 
 	}
 	if body.String() != passthroughUpstream+completed {
 		t.Fatalf("completion was not forwarded verbatim.\ngot:  %q\nwant: %q", body.String(), passthroughUpstream+completed)
+	}
+}
+
+func TestCodexResponsesPassthroughPrecedence(t *testing.T) {
+	attr := func(v string) *cliproxyauth.Auth {
+		return &cliproxyauth.Auth{Attributes: map[string]string{cliproxyauth.AttributeCodexResponsesPassthrough: v}}
+	}
+	meta := func(v any) *cliproxyauth.Auth {
+		return &cliproxyauth.Auth{Metadata: map[string]any{"responses_passthrough": v}}
+	}
+	tests := []struct {
+		name string
+		env  string
+		auth *cliproxyauth.Auth
+		want bool
+	}{
+		{"nothing set is off", "", &cliproxyauth.Auth{}, false},
+		{"nil auth and no env is off", "", nil, false},
+		{"env on applies", "true", &cliproxyauth.Auth{}, true},
+		{"env on applies to nil auth", "1", nil, true},
+		{"env off", "false", &cliproxyauth.Auth{}, false},
+		{"invalid env is off", "maybe", &cliproxyauth.Auth{}, false},
+		{"account on without env", "", attr("true"), true},
+		{"account on beats env off", "false", attr("true"), true},
+		{"account off beats env on", "true", attr("false"), false},
+		{"account metadata bool on", "", meta(true), true},
+		{"account metadata off beats env on", "true", meta(false), false},
+		{"account metadata string on", "", meta("true"), true},
+		{"attribute beats metadata", "", &cliproxyauth.Auth{Attributes: map[string]string{cliproxyauth.AttributeCodexResponsesPassthrough: "false"}, Metadata: map[string]any{"responses_passthrough": true}}, false},
+		{"unset account inherits env", "true", &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "k"}}, true},
+		{"invalid account value inherits env", "true", attr("nope"), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(codexResponsesPassthroughEnv, tc.env)
+			if got := codexResponsesPassthroughEnabled(tc.auth); got != tc.want {
+				t.Fatalf("enabled = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -527,12 +527,11 @@ upstream:
     # proxy_read_timeout, is what bounds them.
     # Default: false
     stream-bootstrap-buffering: false
-    # Forward the Codex upstream SSE bytes of /v1/responses streams to the client unchanged when no
-    # format translation is needed. Upstream errors that arrive mid-stream reach the client exactly as
-    # OpenAI sent them. Skips the output patching, multi-agent restoration, and error reshaping that
-    # the default path applies. Ignored while stream-bootstrap-buffering is on.
-    # Default: false
-    responses-passthrough: false
+    # Pass-through of same-format /v1/responses streams is opt-in outside this file: set the environment
+    # variable CLIPROXY_CODEX_RESPONSES_PASSTHROUGH=true to forward Codex SSE bytes unchanged for every
+    # account, and/or set responses-passthrough per Codex API key (codex-api-key entries) or
+    # "responses_passthrough": true in a Codex auth file. The per-account value wins over the variable;
+    # otherwise it is off. Ignored while stream-bootstrap-buffering is on.
     # Optional maximum duration to hold back uncommitted response headers during bootstrap buffering.
     # When set (e.g. "20s"), if the time ceiling is reached before the first generated token,
     # the stream is released to the client and further in-stream overloads are delivered rather
@@ -862,6 +861,7 @@ upstream:
 #           disable-codex-cloaking: false # optional: true disables cloaking; OAuth provider settings do not apply here
 #           alpha-search: false # optional: allow this key to serve /v1/alpha/search via base-url + /alpha/search
 #           websockets: false # optional: use the Codex upstream WebSocket transport
+#           responses-passthrough: false # optional: true forwards /v1/responses SSE bytes unchanged for this key, false opts out; omitted inherits CLIPROXY_CODEX_RESPONSES_PASSTHROUGH
 #
 #   # Claude API keys
 #

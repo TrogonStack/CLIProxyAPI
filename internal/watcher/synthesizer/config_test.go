@@ -1495,3 +1495,31 @@ func TestConfigSynthesizer_EmptyConnectionPoolBlockOptsIn(t *testing.T) {
 		t.Fatalf("keyless OpenAI-compatible entry lost its group connection-pool block: %+v", keylessAuths)
 	}
 }
+
+func TestConfigSynthesizer_CodexKeyResponsesPassthrough(t *testing.T) {
+	ctx := &SynthesisContext{
+		Config: &config.Config{
+			CodexKey: []config.CodexKey{
+				{APIKey: "key-on", ResponsesPassthrough: boolPointer(true)},
+				{APIKey: "key-off", ResponsesPassthrough: boolPointer(false)},
+				{APIKey: "key-unset"},
+			},
+		},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+	auths, err := NewConfigSynthesizer().Synthesize(ctx)
+	if err != nil || len(auths) != 3 {
+		t.Fatalf("synthesize: auths=%d err=%v", len(auths), err)
+	}
+	want := []struct {
+		value string
+		set   bool
+	}{{"true", true}, {"false", true}, {"", false}}
+	for i, w := range want {
+		got, ok := auths[i].Attributes[coreauth.AttributeCodexResponsesPassthrough]
+		if ok != w.set || got != w.value {
+			t.Errorf("auth %d: attribute = %q (set=%v), want %q (set=%v)", i, got, ok, w.value, w.set)
+		}
+	}
+}

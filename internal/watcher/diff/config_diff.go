@@ -167,9 +167,6 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Codex.StreamBootstrapBuffering != newCfg.Codex.StreamBootstrapBuffering {
 		changes = append(changes, fmt.Sprintf("codex.stream-bootstrap-buffering: %t -> %t", oldCfg.Codex.StreamBootstrapBuffering, newCfg.Codex.StreamBootstrapBuffering))
 	}
-	if oldCfg.Codex.ResponsesPassthrough != newCfg.Codex.ResponsesPassthrough {
-		changes = append(changes, fmt.Sprintf("codex.responses-passthrough: %t -> %t", oldCfg.Codex.ResponsesPassthrough, newCfg.Codex.ResponsesPassthrough))
-	}
 	if strings.TrimSpace(oldCfg.Codex.StreamBootstrapTimeout) != strings.TrimSpace(newCfg.Codex.StreamBootstrapTimeout) {
 		changes = append(changes, fmt.Sprintf("codex.stream-bootstrap-timeout: %s -> %s", strings.TrimSpace(oldCfg.Codex.StreamBootstrapTimeout), strings.TrimSpace(newCfg.Codex.StreamBootstrapTimeout)))
 	}
@@ -402,6 +399,7 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			}
 			changes = appendOptionalBoolChange(changes, fmt.Sprintf("codex[%d].disable-cooling", i), o.DisableCooling, n.DisableCooling)
 			changes = appendOptionalBoolChange(changes, fmt.Sprintf("codex[%d].disable-codex-cloaking", i), o.DisableCodexCloaking, n.DisableCodexCloaking)
+			changes = appendOptionalBoolChange(changes, fmt.Sprintf("codex[%d].responses-passthrough", i), o.ResponsesPassthrough, n.ResponsesPassthrough)
 			if strings.TrimSpace(o.APIKey) != strings.TrimSpace(n.APIKey) {
 				changes = append(changes, fmt.Sprintf("codex[%d].api-key: updated", i))
 			}
