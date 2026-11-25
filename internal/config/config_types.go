@@ -335,6 +335,11 @@ type CodexConfig struct {
 	UpstreamRequestCompressionMinBytes int `yaml:"upstream-request-compression-min-bytes,omitempty" json:"upstream-request-compression-min-bytes,omitempty"`
 	// DisableCodexCloaking disables forcing the official Codex identity headers on HTTP/SSE and WebSocket requests.
 	DisableCodexCloaking bool `yaml:"disable-codex-cloaking" json:"disable-codex-cloaking"`
+	// ResponsesPassthrough opts every Codex account in to forwarding the upstream SSE bytes of
+	// /v1/responses streams unchanged when no translation is needed. The CLIPROXY_CODEX_RESPONSES_PASSTHROUGH
+	// environment variable overrides it and a per-account setting overrides both. Default is false.
+	ResponsesPassthrough bool `yaml:"responses-passthrough" json:"responses-passthrough"`
+
 	// StreamBootstrapBuffering holds back the frames that arrive before generation starts, none of
 	// which the client has seen anything from - the handshake (response.created, response.in_progress,
 	// the websocket metadata frames), keepalive heartbeats, and the *.added announcements of an item

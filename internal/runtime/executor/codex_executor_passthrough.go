@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -21,8 +22,8 @@ const codexResponsesPassthroughEnv = "CLIPROXY_CODEX_RESPONSES_PASSTHROUGH"
 
 // codexResponsesPassthroughEnabled resolves the opt-in: the per-account setting wins when it is set
 // (credential attribute from a config key, then auth file metadata), otherwise the environment
-// variable applies, otherwise pass-through is off.
-func codexResponsesPassthroughEnabled(auth *cliproxyauth.Auth) bool {
+// variable applies, otherwise the global config key, otherwise pass-through is off.
+func codexResponsesPassthroughEnabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
 	if auth != nil {
 		if raw := strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeCodexResponsesPassthrough]); raw != "" {
 			if parsed, errParse := strconv.ParseBool(raw); errParse == nil {
@@ -43,7 +44,7 @@ func codexResponsesPassthroughEnabled(auth *cliproxyauth.Auth) bool {
 			return parsed
 		}
 	}
-	return false
+	return cfg != nil && cfg.Codex.ResponsesPassthrough
 }
 
 // codexResponsesPassthroughEligible reports whether an HTTP/SSE Codex stream may be forwarded to
@@ -52,7 +53,7 @@ func codexResponsesPassthroughEnabled(auth *cliproxyauth.Auth) bool {
 func (e *CodexExecutor) codexResponsesPassthroughEligible(auth *cliproxyauth.Auth, from, responseFormat sdktranslator.Format, buffering, isGrokClient bool) bool {
 	return !buffering && !isGrokClient &&
 		from == sdktranslator.FormatOpenAIResponse && responseFormat == sdktranslator.FormatOpenAIResponse &&
-		codexResponsesPassthroughEnabled(auth)
+		codexResponsesPassthroughEnabled(e.cfg, auth)
 }
 
 // streamCodexPassthrough forwards upstream SSE lines unchanged. Every chunk is one whole SSE event

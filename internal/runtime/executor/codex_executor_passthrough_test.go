@@ -120,32 +120,44 @@ func TestCodexResponsesPassthroughPrecedence(t *testing.T) {
 	meta := func(v any) *cliproxyauth.Auth {
 		return &cliproxyauth.Auth{Metadata: map[string]any{"responses_passthrough": v}}
 	}
+	plain := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "k"}}
 	tests := []struct {
 		name string
+		cfg  bool
 		env  string
 		auth *cliproxyauth.Auth
 		want bool
 	}{
-		{"nothing set is off", "", &cliproxyauth.Auth{}, false},
-		{"nil auth and no env is off", "", nil, false},
-		{"env on applies", "true", &cliproxyauth.Auth{}, true},
-		{"env on applies to nil auth", "1", nil, true},
-		{"env off", "false", &cliproxyauth.Auth{}, false},
-		{"invalid env is off", "maybe", &cliproxyauth.Auth{}, false},
-		{"account on without env", "", attr("true"), true},
-		{"account on beats env off", "false", attr("true"), true},
-		{"account off beats env on", "true", attr("false"), false},
-		{"account metadata bool on", "", meta(true), true},
-		{"account metadata off beats env on", "true", meta(false), false},
-		{"account metadata string on", "", meta("true"), true},
-		{"attribute beats metadata", "", &cliproxyauth.Auth{Attributes: map[string]string{cliproxyauth.AttributeCodexResponsesPassthrough: "false"}, Metadata: map[string]any{"responses_passthrough": true}}, false},
-		{"unset account inherits env", "true", &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "k"}}, true},
-		{"invalid account value inherits env", "true", attr("nope"), true},
+		{"nothing set is off", false, "", &cliproxyauth.Auth{}, false},
+		{"nil auth and nothing set is off", false, "", nil, false},
+		{"env on applies", false, "true", &cliproxyauth.Auth{}, true},
+		{"env on applies to nil auth", false, "1", nil, true},
+		{"env off", false, "false", &cliproxyauth.Auth{}, false},
+		{"invalid env is off", false, "maybe", &cliproxyauth.Auth{}, false},
+		{"config key on applies", true, "", &cliproxyauth.Auth{}, true},
+		{"config key on applies to nil auth", true, "", nil, true},
+		{"invalid env falls through to config key", true, "maybe", plain, true},
+		{"env off beats config key on", true, "false", plain, false},
+		{"env on without config key", false, "true", plain, true},
+		{"account on without env or config", false, "", attr("true"), true},
+		{"account on beats env off", false, "false", attr("true"), true},
+		{"account off beats env on", false, "true", attr("false"), false},
+		{"account off beats config key on", true, "", attr("false"), false},
+		{"account on beats config key off", false, "", attr("true"), true},
+		{"account metadata bool on", false, "", meta(true), true},
+		{"account metadata off beats env on", false, "true", meta(false), false},
+		{"account metadata string on", false, "", meta("true"), true},
+		{"attribute beats metadata", false, "", &cliproxyauth.Auth{Attributes: map[string]string{cliproxyauth.AttributeCodexResponsesPassthrough: "false"}, Metadata: map[string]any{"responses_passthrough": true}}, false},
+		{"unset account inherits env", false, "true", plain, true},
+		{"unset account inherits config key", true, "", plain, true},
+		{"invalid account value inherits env", false, "true", attr("nope"), true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(codexResponsesPassthroughEnv, tc.env)
-			if got := codexResponsesPassthroughEnabled(tc.auth); got != tc.want {
+			cfg := &config.Config{}
+			cfg.Codex.ResponsesPassthrough = tc.cfg
+			if got := codexResponsesPassthroughEnabled(cfg, tc.auth); got != tc.want {
 				t.Fatalf("enabled = %v, want %v", got, tc.want)
 			}
 		})
