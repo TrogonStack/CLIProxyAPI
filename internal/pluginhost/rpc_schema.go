@@ -29,10 +29,12 @@ type rpcCapabilities struct {
 	FrontendAuthOmitBody              bool                         `json:"frontend_auth_omit_body,omitempty"`
 	Scheduler                         bool                         `json:"scheduler"`
 	SchedulerAcrossPriorities         bool                         `json:"scheduler_across_priorities,omitempty"`
+	SchedulerPickCancel               bool                         `json:"scheduler_pick_cancel,omitempty"`
 	SchedulerContinuity               bool                         `json:"scheduler_continuity,omitempty"`
 	ModelRouter                       bool                         `json:"model_router"`
 	Executor                          bool                         `json:"executor"`
 	ExecutorModelScope                pluginapi.ExecutorModelScope `json:"executor_model_scope"`
+	ExecutorAuthProviders             []string                     `json:"executor_auth_providers,omitempty"`
 	ExecutorInputFormats              []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats             []string                     `json:"executor_output_formats,omitempty"`
 	RequestTranslator                 bool                         `json:"request_translator"`
@@ -110,6 +112,11 @@ type rpcExecutorHTTPRequest struct {
 
 type rpcRequestInterceptRequest struct {
 	pluginapi.RequestInterceptRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type rpcSchedulerPickRequest struct {
+	pluginapi.SchedulerPickRequest
 	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
@@ -226,6 +233,19 @@ func schedulerWantsAcrossPriorities(caps pluginapi.Capabilities) bool {
 	return false
 }
 
+func schedulerWantsPickCancel(caps pluginapi.Capabilities) bool {
+	if caps.Scheduler == nil {
+		return false
+	}
+	if caps.SchedulerPickCancel {
+		return true
+	}
+	if opt, ok := caps.Scheduler.(interface{ SchedulerWantsPickCancel() bool }); ok && opt != nil {
+		return opt.SchedulerWantsPickCancel()
+	}
+	return false
+}
+
 func rpcCapabilitiesFromPlugin(plugin pluginapi.Plugin) rpcCapabilities {
 	caps := plugin.Capabilities
 	return rpcCapabilities{
@@ -238,10 +258,12 @@ func rpcCapabilitiesFromPlugin(plugin pluginapi.Plugin) rpcCapabilities {
 		FrontendAuthOmitBody:              frontendAuthProviderWantsOmitBody(caps),
 		Scheduler:                         caps.Scheduler != nil,
 		SchedulerAcrossPriorities:         schedulerWantsAcrossPriorities(caps),
+		SchedulerPickCancel:               schedulerWantsPickCancel(caps),
 		SchedulerContinuity:               caps.SchedulerContinuity != nil,
 		ModelRouter:                       caps.ModelRouter != nil,
 		Executor:                          caps.Executor != nil,
 		ExecutorModelScope:                normalizedExecutorModelScope(caps),
+		ExecutorAuthProviders:             append([]string(nil), caps.ExecutorAuthProviders...),
 		ExecutorInputFormats:              append([]string(nil), caps.ExecutorInputFormats...),
 		ExecutorOutputFormats:             append([]string(nil), caps.ExecutorOutputFormats...),
 		RequestTranslator:                 caps.RequestTranslator != nil,

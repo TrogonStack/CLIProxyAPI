@@ -647,6 +647,7 @@ func TestHandleModelsHomeModeHookAndFallback(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestModelInputsForClientsScopeRoutesAndCapabilitiesToAllowedClients(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	const modelID = "scoped-routes-model"
@@ -676,6 +677,38 @@ func TestModelInputsForClientsScopeRoutesAndCapabilitiesToAllowedClients(t *test
 	for _, input := range ModelInputsForClients(reg, map[string]struct{}{"nobody": {}}) {
 		if input.ID == modelID {
 			t.Fatal("a client set that serves nothing listed the model")
+=======
+func TestBuildModelsResponseInfersCopilotAndDevinOwnership(t *testing.T) {
+	resp := BuildModelsResponse([]ModelInput{
+		{
+			ID:              "copilot/gpt-dynamic-preview",
+			MetadataModelID: "gpt-dynamic-preview",
+			Type:            "copilot",
+		},
+		{
+			ID: "copilot/claude-dynamic-preview",
+		},
+		{
+			ID:              "devin/gpt-dynamic-preview",
+			MetadataModelID: "gpt-dynamic-preview",
+			Type:            "devin",
+		},
+	})
+	raw, errMarshal := MarshalCompact(resp)
+	if errMarshal != nil {
+		t.Fatalf("MarshalCompact: %v", errMarshal)
+	}
+	_, entries := parseModelsByID(t, raw)
+	for _, tc := range []struct {
+		id, wantOwnedBy string
+	}{
+		{"copilot/gpt-dynamic-preview", "copilot"},
+		{"copilot/claude-dynamic-preview", "copilot"},
+		{"devin/gpt-dynamic-preview", "devin"},
+	} {
+		if got := entries[tc.id].Get("owned_by").String(); got != tc.wantOwnedBy {
+			t.Fatalf("%s owned_by = %q, want %q", tc.id, got, tc.wantOwnedBy)
+>>>>>>> refs/tags/v8.1.8
 		}
 	}
 }

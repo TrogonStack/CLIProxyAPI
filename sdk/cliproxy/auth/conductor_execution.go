@@ -347,6 +347,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 	ctx = coreusage.CaptureIdentity(ctx)
 	ctx = contextWithInFlightScope(ctx, scope)
 	ctx = withRequestRefusedAuths(ctx)
+	ctx = withAntigravityAttemptedModels(ctx)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -528,6 +529,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 	ctx = coreusage.CaptureIdentity(ctx)
 	ctx = contextWithInFlightScope(ctx, scope)
 	ctx = withRequestRefusedAuths(ctx)
+	ctx = withAntigravityAttemptedModels(ctx)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -609,6 +611,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 	ctx = coreusage.CaptureIdentity(ctx)
 	ctx = contextWithInFlightScope(ctx, scope)
 	ctx = withRequestRefusedAuths(ctx)
+	ctx = withAntigravityAttemptedModels(ctx)
 	if m.HomeEnabled() {
 		if unlockSession := m.lockHomeWebsocketSession(ctx, opts); unlockSession != nil {
 			defer unlockSession()
@@ -1450,6 +1453,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, CompletedResponse: errExec == nil && !resp.Incomplete && isCompletedExecutionPayload(resp.Payload), Options: execOpts, AccessToken: authAccessTokenForRequest(execCtx, auth, execOpts.Headers), RefreshToken: authRefreshToken(auth), CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
 			if errExec != nil {
+				recordAntigravityAttemptedModelFromAttempt(ctx, execCtx, provider, auth.ID, resultModel, errExec)
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
 					result.RetryAfter = ra
@@ -1752,6 +1756,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, SkipQuotaObservation: true, AccessToken: authAccessTokenForRequest(execCtx, auth, execOpts.Headers), RefreshToken: authRefreshToken(auth), CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
 			if errExec != nil {
+				recordAntigravityAttemptedModelFromAttempt(ctx, execCtx, provider, auth.ID, resultModel, errExec)
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
 					result.RetryAfter = ra
@@ -2070,7 +2075,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		var preparedAuth *Auth
 		var errPrepare error
 		if selection != nil {
-			preparedAuth, errPrepare = m.prepareHomeRequestAuth(execCtx, executor, selection)
+			preparedAuth, errPrepare = m.prepareHomeRequestAuth(execCtx, selection, models[0])
 		} else {
 			preparedAuth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		}
@@ -2103,7 +2108,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				}
 			}
 			stateModel := m.selectionModelKeyForAuth(auth, routeModel)
-			if stateModel == "" {
+			if selection != nil && selection.ExecutorPlugin != "" {
+				stateModel = models[0]
+			} else if stateModel == "" {
 				stateModel = canonicalModelKey(routeModel)
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts, AccessToken: authAccessTokenForRequest(execCtx, auth, pickOpts.Headers), RefreshToken: authRefreshToken(auth), CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
@@ -2159,28 +2166,19 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			auth = preparedAuth
 		}
 		execReq := sanitizeDownstreamWebsocketFallbackRequest(execCtx, auth, req)
-		if selection != nil && !restoreExecutionModel {
+		restoreModel := restoreExecutionModel && (selection == nil || selection.ExecutorPlugin == "")
+		if selection != nil && !restoreModel {
 			execReq = attachResolvedHomeModelInfo(execReq, auth, routeModel, selection.modelInfo, selection.configurationUpdateSupport)
 		}
 		streamExecutionModel := ""
-		if restoreExecutionModel {
+		if restoreModel {
 			streamExecutionModel = executionModel
 		}
 		execOpts := opts
 		if selection != nil {
 			execOpts.ExecutionLifecycle = selection
-			if selection.CanonicalSessionID != "" {
-				meta := make(map[string]any, len(execOpts.Metadata)+2)
-				for k, v := range execOpts.Metadata {
-					meta[k] = v
-				}
-				meta[cliproxyexecutor.CanonicalSessionIDMetadataKey] = selection.CanonicalSessionID
-				if selection.ParentSessionID != "" && selection.ParentSessionID != selection.CanonicalSessionID {
-					meta[cliproxyexecutor.ParentSessionIDMetadataKey] = selection.ParentSessionID
-				} else {
-					delete(meta, cliproxyexecutor.ParentSessionIDMetadataKey)
-				}
-				execOpts.Metadata = meta
+			if selection.CanonicalSessionID != "" || selection.lcpAffinitySessionID != "" {
+				execOpts.Metadata = applyHomeSelectionSessionMetadata(execOpts.Metadata, selection)
 			}
 		} else if pickOpts.Metadata != nil {
 			if canonicalID, ok := pickOpts.Metadata[cliproxyexecutor.CanonicalSessionIDMetadataKey]; ok {
@@ -2845,24 +2843,41 @@ func mergeHomePreparedSnapshot(base, current, prepared *Auth) *Auth {
 }
 
 // prepareHomeRequestAuth prepares a dispatch auth without reading or updating local auth state.
-func (m *Manager) prepareHomeRequestAuth(ctx context.Context, executor ProviderExecutor, selection *HomeDispatchSelection) (*Auth, error) {
+func (m *Manager) prepareHomeRequestAuth(ctx context.Context, selection *HomeDispatchSelection, upstreamModel string) (*Auth, error) {
 	if selection == nil {
 		return nil, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = context.WithValue(ctx, homeAuthPreparationModelKey{}, canonicalModelKey(upstreamModel))
 	auth := selection.CloneAuth()
-	prepared, errPrepare := m.prepareHomeAuthSnapshot(ctx, executor, auth)
+	credentialExecutor := selection.Executor
+	if selection.ExecutorPlugin != "" {
+		credentialExecutor = selection.authExecutor
+	}
+	prepared, errPrepare := m.prepareHomeAuthSnapshot(ctx, credentialExecutor, auth, selection.ExecutorPlugin != "")
 	if errPrepare != nil {
 		warnLogHomeCredentialFailure(ctx, "request_auth_preparation", selection.Provider, auth, errPrepare)
+	} else if selection.ExecutorPlugin != "" && prepared != auth {
+		preserveHomeRoutingAttributes(prepared, auth)
 	}
 	return prepared, errPrepare
 }
 
-func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor ProviderExecutor, auth *Auth) (*Auth, error) {
+func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor ProviderExecutor, auth *Auth, delegated bool) (*Auth, error) {
 	if m == nil || executor == nil || auth == nil {
 		return auth, nil
 	}
 	preparer, ok := executor.(RequestAuthPreparer)
-	if !ok || preparer == nil || !preparer.ShouldPrepareRequestAuth(auth) {
+	if !ok || preparer == nil {
+		return auth, nil
+	}
+	shouldPrepare := preparer.ShouldPrepareRequestAuth
+	if providerPreparer, okProvider := preparer.(HomePluginRequestAuthPreparer); delegated && okProvider {
+		shouldPrepare = providerPreparer.ShouldPrepareHomePluginRequestAuth
+	}
+	if !shouldPrepare(auth) {
 		return auth, nil
 	}
 	if ctx == nil {
@@ -2874,7 +2889,7 @@ func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor Provider
 
 	prepareDirect := func(callCtx context.Context) (*Auth, error) {
 		target := auth.Clone()
-		if !preparer.ShouldPrepareRequestAuth(target) {
+		if !shouldPrepare(target) {
 			return target, nil
 		}
 		updated, errPrepare := preparer.PrepareRequestAuth(callCtx, target)
@@ -2934,7 +2949,7 @@ func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor Provider
 				close(flight.done)
 			}()
 
-			if !preparer.ShouldPrepareRequestAuth(snapshot) {
+			if !shouldPrepare(snapshot) {
 				flight.result = snapshot
 				return
 			}
@@ -4091,13 +4106,14 @@ func (m *Manager) recordVerifyFailure(execCtx context.Context, auth *Auth, provi
 }
 
 func (m *Manager) completeVerifyInferenceSuccess(execCtx context.Context, auth *Auth, provider, stateModel, routeModel string, opts cliproxyexecutor.Options, accessToken string, credVersion, regEpoch, executionSeq uint64) (*Auth, error) {
-	m.MarkResult(execCtx, Result{
+	appliedVerification := m.markResult(execCtx, Result{
 		AuthID:            auth.ID,
 		Provider:          provider,
 		Model:             stateModel,
 		RouteModel:        routeModel,
 		Success:           true,
 		CompletedResponse: true,
+		OperatorVerify:    true,
 		Options:           opts,
 		AccessToken:       accessToken,
 		RefreshToken:      authRefreshToken(auth),
@@ -4109,8 +4125,15 @@ func (m *Manager) completeVerifyInferenceSuccess(execCtx context.Context, auth *
 	if !okUpdated || updated == nil {
 		return nil, verifyCredentialRemovedError()
 	}
-	if updated.CredentialVersion != credVersion || updated.RegistrationEpoch != regEpoch || !updated.InferenceVerified {
+	if updated.CredentialVersion != credVersion || updated.RegistrationEpoch != regEpoch {
 		return updated, verifyCredentialSupersededError()
+	}
+	if !appliedVerification || !updated.InferenceVerified {
+		return updated, &Error{
+			Code:       "verification_not_applied",
+			Message:    "upstream completed the verification request, but the credential is still cooling down or disabled; it was not marked verified",
+			HTTPStatus: http.StatusConflict,
+		}
 	}
 	return updated, nil
 }
@@ -4137,10 +4160,14 @@ func (m *Manager) VerifyInference(ctx context.Context, id, model string) (*Auth,
 		return auth, &Error{Code: "sign_in_required", Message: "credential requires sign-in before inference verification", HTTPStatus: http.StatusConflict}
 	}
 	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+	executorKey := executorKeyFromAuth(auth)
+	if executorKey == "" {
+		executorKey = provider
+	}
 	m.mu.RLock()
-	executor := m.executors[provider]
+	executor, okExec := m.executorLocked(executorKey)
 	m.mu.RUnlock()
-	if executor == nil {
+	if !okExec || executor == nil {
 		return auth, &Error{Code: "executor_not_found", Message: "executor not registered for provider", HTTPStatus: http.StatusBadRequest}
 	}
 

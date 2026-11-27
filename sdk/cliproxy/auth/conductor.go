@@ -45,6 +45,13 @@ type RequestAuthPreparer interface {
 	PrepareRequestAuth(ctx context.Context, auth *Auth) (*Auth, error)
 }
 
+// HomePluginRequestAuthPreparer lets a credential provider also prepare auth
+// that a Home-selected plugin will consume without running the provider executor.
+type HomePluginRequestAuthPreparer interface {
+	RequestAuthPreparer
+	ShouldPrepareHomePluginRequestAuth(auth *Auth) bool
+}
+
 // ExecutionSessionCloser allows executors to release per-session runtime resources.
 type ExecutionSessionCloser interface {
 	CloseExecutionSession(sessionID string)
@@ -85,6 +92,11 @@ type Result struct {
 	// CompletedResponse reports that the upstream execution produced a completed
 	// generation response (as opposed to an incomplete stream or non-generation call).
 	CompletedResponse bool
+	// OperatorVerify marks the result of an operator-triggered, account-pinned
+	// VerifyInference probe. A completed response from such a probe is direct
+	// evidence that the credential can serve again, so it may release an active
+	// credential_quota cooldown that ordinary client traffic must leave in place.
+	OperatorVerify bool
 	// RetryAfter carries a provider supplied retry hint (e.g. 429 retryDelay).
 	RetryAfter *time.Duration
 	// CredentialScope indicates that the failure affects the whole credential across models (e.g. Anthropic 5h/7d unified limits).
@@ -218,7 +230,8 @@ type Manager struct {
 	authChangeWatchers map[string]map[chan struct{}]struct{}
 	scheduler          *authScheduler
 	// pluginScheduler runs outside m.mu before falling back to native selection.
-	pluginScheduler PluginScheduler
+	pluginScheduler     PluginScheduler
+	homePluginExecutors HomePluginExecutorResolver
 	// continuityClock overrides time.Now and timer waiting in unit tests.
 	continuityClock continuityClock
 	// homeRuntimeAuths retains legacy session auth lookups for non-execution callers.
@@ -245,8 +258,8 @@ type Manager struct {
 	// apiKeyModelRouting atomically publishes per-auth aliases and configured capabilities.
 	apiKeyModelRouting atomic.Value
 
-	// modelPoolOffsets tracks per-auth alias pool rotation state.
-	modelPoolOffsets map[string]int
+	// modelPoolOffsets tracks per-auth alias pool rotation state keyed by auth ID and pool key.
+	modelPoolOffsets map[string]map[string]int
 
 	// runtimeConfig stores the latest application config for request-time decisions.
 	// It is initialized in NewManager; never Load() before first Store().
@@ -260,6 +273,9 @@ type Manager struct {
 	refreshLoop   *authAutoRefreshLoop
 	// refreshJobs retains queued and running jobs across loop restarts under m.mu.
 	refreshJobs map[string]*authRefreshJob
+	// autoRefreshInFlight counts auto-refresh workers still refreshing or persisting under m.mu.
+	autoRefreshInFlight int
+	autoRefreshIdleCh   chan struct{}
 
 	// refreshLocks serializes credential refresh and request-auth preparation
 	// per auth ID so concurrent refreshes, 401 recoveries, and preparations do
@@ -303,7 +319,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		homeSessionSelections: make(map[string]map[homeSessionSelectionKey]*HomeDispatchSelection),
 		homePrepareFlights:    make(map[string]*homeAuthPrepareFlight),
 		providerOffsets:       make(map[string]int),
-		modelPoolOffsets:      make(map[string]int),
+		modelPoolOffsets:      make(map[string]map[string]int),
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})
