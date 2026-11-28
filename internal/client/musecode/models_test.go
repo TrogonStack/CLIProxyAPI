@@ -647,7 +647,6 @@ func TestHandleModelsHomeModeHookAndFallback(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestModelInputsForClientsScopeRoutesAndCapabilitiesToAllowedClients(t *testing.T) {
 	reg := registry.GetGlobalRegistry()
 	const modelID = "scoped-routes-model"
@@ -677,7 +676,10 @@ func TestModelInputsForClientsScopeRoutesAndCapabilitiesToAllowedClients(t *test
 	for _, input := range ModelInputsForClients(reg, map[string]struct{}{"nobody": {}}) {
 		if input.ID == modelID {
 			t.Fatal("a client set that serves nothing listed the model")
-=======
+		}
+	}
+}
+
 func TestBuildModelsResponseInfersCopilotAndDevinOwnership(t *testing.T) {
 	resp := BuildModelsResponse([]ModelInput{
 		{
@@ -708,7 +710,6 @@ func TestBuildModelsResponseInfersCopilotAndDevinOwnership(t *testing.T) {
 	} {
 		if got := entries[tc.id].Get("owned_by").String(); got != tc.wantOwnedBy {
 			t.Fatalf("%s owned_by = %q, want %q", tc.id, got, tc.wantOwnedBy)
->>>>>>> refs/tags/v8.1.8
 		}
 	}
 }
